@@ -68,15 +68,8 @@ to production stays a deliberate act in the Console.
 The file lands at `app/build/outputs/bundle/release/app-release.aab`. Play wants
 an `.aab`, not an `.apk`.
 
-To build it in CI instead, tag a commit:
-
-```
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-That runs `.github/workflows/release.yml`, which needs four repository secrets
-(Settings → Secrets and variables → Actions):
+To have CI build it instead, push a tag — see section 3. It needs these
+repository secrets (Settings → Secrets and variables → Actions):
 
 | Secret | Value |
 |---|---|
@@ -160,9 +153,12 @@ submission, usually within a few days.
 
 ---
 
-## What is deliberately not automated
+## What is deliberately left to you
 
-The workflow builds and signs the bundle but does not upload it. Uploading needs
-a Play service account with a JSON key, and an automated upload to a store
-listing is not something to switch on before a human has watched it work once.
-Add it later if you want it.
+The workflow uploads to the **internal testing** track only. Promoting that to
+production, and everything on the store listing, stays a manual step — an
+automated push straight to the public is not something to switch on before a
+human has watched it work once.
+
+It also does not create the Play listing. The first upload has to happen in the
+Console, by hand, before any of this can run.
