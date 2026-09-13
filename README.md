@@ -148,6 +148,28 @@ seeking works. A long film does not have to cross the network before it starts.
 playing the same audio a few milliseconds apart would echo, so the other one is
 muted.
 
+## Send something to Duo from another app
+
+Duo appears in the share sheet. Share a video from a gallery, a picture from
+Photos, or a link from a browser, and it arrives on the setup screen with the
+mode already set. Then start a session as usual.
+
+Duo also appears under **Open with** for a page, a film, a picture, and a PDF.
+Open one of those with Duo and the same thing happens.
+
+| What you send | What Duo does |
+|---|---|
+| A video | Sets the clip, and picks the Video mode |
+| A picture, or a PDF | Sets the picture, and picks the File mode |
+| A link | Fills the address, and picks the Web mode |
+
+Nothing starts a session on its own. Which phone hosts and which one joins is
+a question only the people holding them can answer.
+
+If a session is already running, a shared film replaces what is playing, and a
+shared link takes both phones to the new page. A shared picture is held until
+the next session starts.
+
 ## Run the demo
 
 1. Connect both phones to the same WiFi network. One phone can supply a hotspot.

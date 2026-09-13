@@ -325,6 +325,35 @@ class Session(private val scope: CoroutineScope, context: Context) {
         }
     }
 
+    /**
+     * Take something another app handed over: a film to play, a picture to
+     * show, or an address to open. The setup screen then shows it, and whoever
+     * is holding the phones decides which one hosts.
+     *
+     * Nothing here starts a session. Only the people holding the two phones
+     * know which of them should be the host.
+     */
+    fun accept(incoming: Incoming) {
+        when {
+            incoming.mime.startsWith("video/") -> {
+                mode = Mode.Video
+                pickClip(incoming.uri, incoming.name)
+            }
+
+            incoming.mime.startsWith("image/") || incoming.mime == "application/pdf" -> {
+                mode = Mode.Picture
+                pickPicture(incoming.uri, incoming.name)
+            }
+
+            else -> {
+                mode = Mode.Web
+                url = incoming.uri.toString()
+                // A session may already be running on a page. Take it there too.
+                if (phase == Phase.Live) sendUrl(url)
+            }
+        }
+    }
+
     /** Turn the page. Only the phone showing the document can do this. */
     fun stepPage(delta: Int) {
         if (pictureUri == null || picturePages <= 1) return

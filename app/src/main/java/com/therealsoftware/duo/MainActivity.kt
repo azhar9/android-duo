@@ -2,6 +2,7 @@ package com.therealsoftware.duo
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -15,6 +16,7 @@ import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.ManagedActivityResultLauncher
+import androidx.core.content.IntentCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
@@ -131,7 +133,40 @@ private fun viewportOf(world: World, viewW: Float, viewH: Float): Viewport =
         }
     }
 
+/**
+ * Something another app handed to Duo: a film, a picture, a document, or an
+ * address.
+ */
+data class Incoming(val uri: Uri, val mime: String, val name: String)
+
+/** Reads what another app sent, if it sent anything Duo can show. */
+private fun incomingFrom(context: Context, intent: Intent?): Incoming? {
+    val i = intent ?: return null
+    val shared = IntentCompat.getParcelableExtra(i, Intent.EXTRA_STREAM, Uri::class.java)
+    val uri = when {
+        shared != null -> shared
+        i.action == Intent.ACTION_VIEW -> i.data
+        else -> null
+    }
+    if (uri != null) {
+        val mime = i.type ?: runCatching { context.contentResolver.getType(uri) }.getOrNull() ?: ""
+        return Incoming(uri, mime, displayName(context, uri))
+    }
+    // A shared link has no file behind it, only text. A chat app and a browser
+    // both send it this way.
+    if (i.action != Intent.ACTION_SEND) return null
+    val text = i.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+    return if (text.startsWith("http://") || text.startsWith("https://")) {
+        Incoming(Uri.parse(text), "text/plain", text)
+    } else {
+        null
+    }
+}
+
 class MainActivity : ComponentActivity() {
+
+    private val incoming = mutableStateOf<Incoming?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Full bleed. A status bar down one edge kills the "one screen" illusion dead.
@@ -140,15 +175,26 @@ class MainActivity : ComponentActivity() {
             hide(WindowInsetsCompat.Type.systemBars())
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
-        setContent { DuoApp() }
+        incoming.value = incomingFrom(this, intent)
+        setContent { DuoApp(incoming.value) }
+    }
+
+    /** A second share arrives here, because the activity is singleTask. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        incoming.value = incomingFrom(this, intent)
     }
 }
 
 @Composable
-fun DuoApp() {
+fun DuoApp(incoming: Incoming? = null) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val session = remember { Session(scope, context) }
+
+    // Whatever another app sent, handed to the session once.
+    LaunchedEffect(incoming) { incoming?.let { session.accept(it) } }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Page)) {
         val wDp = maxWidth.value
@@ -321,7 +367,8 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "The host renders the page and streams it. Both phones show one half.",
+                        "Both phones load the page and each shows one half. Scroll on " +
+                            "either one and the other follows.",
                         fontSize = 14.sp, color = Sub, lineHeight = 16.sp,
                     )
                 }
