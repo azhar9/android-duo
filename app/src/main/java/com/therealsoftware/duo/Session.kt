@@ -11,8 +11,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -201,6 +203,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
     private var lastPositionTick = 0L
     private var lastSync = 0L
     private var driftStrikes = 0
+    private var prefetchJob: Job? = null
 
     init {
         wire()
@@ -700,9 +703,38 @@ class Session(private val scope: CoroutineScope, context: Context) {
             playWhenReady = isHost
             prepare()
         }
+        if (source == Source.Peer) fillCacheInBackground(item)
+    }
+
+    /**
+     * Pull the whole clip down as fast as the link allows, without waiting for
+     * playback to reach it.
+     *
+     * The player reads at its own pace. Left to itself it caches only what it
+     * has played, so it stays a hostage to the network for the whole film and
+     * any hiccup reaches the picture. This walks the file once at full speed.
+     * When it finishes, playback reads from the device and the network stops
+     * mattering.
+     *
+     * CacheDataSource skips the parts the player has already fetched, so the
+     * two do not race over the same bytes.
+     */
+    private fun fillCacheInBackground(item: MediaItem) {
+        val url = item.localConfiguration?.uri?.toString() ?: return
+        prefetchJob?.cancel()
+        prefetchJob = scope.launch(Dispatchers.IO) {
+            runCatching {
+                val source = cachingSource(appContext).createDataSource()
+                val spec = DataSpec(android.net.Uri.parse(url))
+                @Suppress("NULLABILITY_MISMATCH_BASED_ON_JAVA_ANNOTATIONS")
+                CacheWriter(source, spec, null, null).cache()
+            }
+        }
     }
 
     private fun stopPlayer() {
+        prefetchJob?.cancel()
+        prefetchJob = null
         player?.release()
         player = null
         videoAspect = 16f / 9f
