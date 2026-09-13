@@ -44,6 +44,11 @@ setup screen. Two pairs of phones on one network must use different channels,
 or they will fight over the same ports and the second pair will fail for
 reasons that look like magic.
 
+Both phones must also be running the **same build**. The setup screen shows
+when this one was compiled, and the app refuses to start when the two do not
+match — an older build may not speak the same protocol, and the failure would
+otherwise look like a broken picture.
+
 The channel is shown before you start. Pair one uses channel 1, pair two uses
 channel 2, and so on.
 
@@ -140,14 +145,16 @@ muted.
    **Hold both phones the same way** — both tall, or both wide. The two halves
    cannot line up otherwise, and the host refuses to start if they do not match.
 2. Start Duo on both phones. Both show the address of that phone.
-3. Check the **channel** number. Two pairs of phones on one network must use
+3. Check the **version** at the bottom of the setup screen. Both phones must
+   show the same one, and the app refuses to start if they do not.
+4. Check the **channel** number. Two pairs of phones on one network must use
    different channels; the two phones in a pair must match.
-4. Touch HOST on the left phone.
-5. On the right phone, type the host's address into **Join this address** and
+5. Touch HOST on the left phone.
+6. On the right phone, type the host's address into **Join this address** and
    touch JOIN. Leave the address empty to let it find the host on its own.
-6. Both phones show the canvas.
-7. Turn the gap dial until the picture agrees across the join.
-8. Drag the ball with your finger.
+7. Both phones show the canvas.
+8. Turn the gap dial until the picture agrees across the join.
+9. Drag the ball with your finger.
 
 The ball obeys the walls of the full canvas. The join between the two phones is
 not a wall.

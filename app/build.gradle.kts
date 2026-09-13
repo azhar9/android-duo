@@ -32,9 +32,19 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+
+        // versionName stays "1.0" for every development build, so it cannot
+        // tell a phone running yesterday's code from one running today's. This
+        // changes on every compile, and two phones carrying the same file carry
+        // the same number.
+        buildConfigField("long", "BUILD_TIME", System.currentTimeMillis().toString() + "L")
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        // So the app can show, and check, which build it is.
+        buildConfig = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

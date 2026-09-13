@@ -399,7 +399,16 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
             )
         }
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(16.dp))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            val built = remember {
+                java.text.SimpleDateFormat("d MMM yyyy, HH:mm", Locale.US)
+                    .format(java.util.Date(session.buildStamp))
+            }
+            Text("Version built $built", fontSize = 13.sp, color = Sub)
+        }
+
+        Spacer(Modifier.height(12.dp))
         Box(
             Modifier.fillMaxWidth().clickable { showLicences = true },
             contentAlignment = Alignment.Center,

@@ -175,6 +175,9 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
     private var myClipName = ""
 
+    /** The moment this build was compiled. Two phones must carry the same one. */
+    val buildStamp: Long = BuildConfig.BUILD_TIME
+
     /** True when this phone can start serving a clip the other one picked. */
     val peerAddress: String? get() = link.peerIp
 
@@ -468,6 +471,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
                     // The two halves can only line up if the phones are held
                     // the same way. One tall and one wide cannot meet.
                     .put("p", if (isPortrait) 1 else 0)
+                    .put("b", buildStamp)
             )
         }
     }
@@ -475,6 +479,14 @@ class Session(private val scope: CoroutineScope, context: Context) {
     private fun onMsg(j: JSONObject) {
         when (j.optString("t")) {
             "hello" -> if (isHost) {
+                // A phone running older code may not speak the same protocol at
+                // all, so this is checked before anything else.
+                if (j.optLong("b", -1L) != buildStamp) {
+                    note = "The two phones are running different versions of Duo. " +
+                        "Install the same build on both, then try again."
+                    phase = Phase.Dead
+                    return@onMsg
+                }
                 if (j.optInt("p", -1) != (if (isPortrait) 1 else 0)) {
                     note = "Both phones must be held the same way. " +
                         "One is tall, the other is wide. Turn one round and try again."
