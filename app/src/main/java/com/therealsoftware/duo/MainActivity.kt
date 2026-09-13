@@ -219,7 +219,11 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
             Spacer(Modifier.height(2.dp))
             Text(myIp, fontSize = 20.sp, color = Ink, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(14.dp))
-            BigButton("Be the host", primary = true) { session.startHost(wDp, hDp) }
+            val firstHalf = if (session.axis == Axis.Horizontal) "left half" else "top half"
+            val secondHalf = if (session.axis == Axis.Horizontal) "right half" else "bottom half"
+            BigButton("Be the host  ·  $firstHalf", primary = true) {
+                session.startHost(wDp, hDp)
+            }
 
             Spacer(Modifier.height(16.dp))
             Text("Join this address", fontSize = 14.sp, color = Sub)
@@ -244,7 +248,7 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
                 fontSize = 14.sp, color = Sub, lineHeight = 19.sp,
             )
             Spacer(Modifier.height(12.dp))
-            BigButton("Join a host", primary = false) {
+            BigButton("Join a host  ·  $secondHalf", primary = false) {
                 session.startJoin(wDp, hDp, hostToFind)
             }
         }

@@ -440,6 +440,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
                 val m = when (j.optString("m")) {
                     "video" -> Mode.Video
                     "web" -> Mode.Web
+                    "picture" -> Mode.Picture
                     else -> Mode.Canvas
                 }
                 when (j.optString("src")) {
