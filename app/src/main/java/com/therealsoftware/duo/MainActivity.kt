@@ -792,7 +792,7 @@ private fun LiveBar(session: Session, web: WebView?, modifier: Modifier = Modifi
             if (session.isHost) {
                 BarButton("−") { session.setGap(session.gapMm - 0.5f) }
                 Text(
-                    "${mm(session.gapMm)}",
+                    "${mm(session.gapMm)} mm",
                     color = Color.White, fontSize = 14.sp, fontFamily = FontFamily.Monospace,
                     modifier = Modifier.padding(horizontal = 8.dp),
                 )
@@ -1012,8 +1012,11 @@ private fun PageSurface(session: Session, onWeb: (WebView) -> Unit) {
     var web by remember { mutableStateOf<WebView?>(null) }
 
     // The page is laid out at the width of the whole canvas, and this phone
-    // looks at its own slice of that.
-    val layoutW = world.totalW * calib
+    // looks at its own slice of that. The layout width must not carry this
+    // phone's size setting: two phones with different sizes would then lay the
+    // page out at two different widths, break the lines in different places,
+    // and never meet at the seam. The size is applied as a zoom instead.
+    val layoutW = world.totalW
     val intoX = (world.sliceX * calib * density).toInt()
     val intoY = (world.sliceY * calib * density).toInt()
 
@@ -1051,7 +1054,8 @@ private fun PageSurface(session: Session, onWeb: (WebView) -> Unit) {
                                 "(function(){var m=document.querySelector('meta[name=viewport]');" +
                                     "if(!m){m=document.createElement('meta');m.name='viewport';" +
                                     "document.head.appendChild(m);}" +
-                                    "m.setAttribute('content','width=$layoutW, initial-scale=1');})()",
+                                    "m.setAttribute('content','width=$layoutW," +
+                                    " initial-scale=$calib');})()",
                                 null,
                             )
                             loaded++
