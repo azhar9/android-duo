@@ -4,11 +4,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!--
+        The two phones stream to each other over the local network, and that
+        traffic is plain HTTP on a private address. There is no server to
+        authenticate against and no certificate to check.
+    -->
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="Duo"
         android:supportsRtl="false"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Duo">
 
         <activity

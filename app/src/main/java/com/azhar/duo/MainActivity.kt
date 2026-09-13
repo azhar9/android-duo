@@ -1,14 +1,21 @@
 package com.azhar.duo
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.graphics.Matrix
+import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.TextureView
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.ManagedActivityResultLauncher
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -57,6 +64,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -141,7 +149,30 @@ private fun MenuScreen(session: Session, wDp: Float, hDp: Float) {
         Spacer(Modifier.height(10.dp))
         DuoButton("JOIN   ·   right half", primary = false) { session.startJoin(wDp, hDp) }
 
-        Spacer(Modifier.height(26.dp))
+        Spacer(Modifier.height(24.dp))
+        val pick = clipPicker { uri, name -> session.pickClip(uri, name) }
+        Label("CLIP")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StepButton(if (session.myClip == null) "PICK VIDEO" else "CHANGE") {
+                pick.launch(pickerRequest())
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                session.myClip?.let { shortName(session.clipName) } ?: "none on this phone",
+                color = if (session.myClip == null) Faint else Seam,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Note(
+            "Pick on either phone. That phone serves the clip and makes the sound;\n" +
+                "the other one streams it. No need to think about which is host."
+        )
+
+        Spacer(Modifier.height(22.dp))
         Label("MODE")
         Row(verticalAlignment = Alignment.CenterVertically) {
             ModeButton("CANVAS", session.mode == Mode.Canvas) { session.mode = Mode.Canvas }
@@ -152,12 +183,13 @@ private fun MenuScreen(session: Session, wDp: Float, hDp: Float) {
         }
         Spacer(Modifier.height(8.dp))
         when {
-            session.mode == Mode.Video && session.video == null -> Note(
-                "no duo.mp4 in the app folder — this falls back to the canvas"
+            session.mode == Mode.Video && session.myClip == null -> Note(
+                "no clip picked here — pick one, or let the other phone pick.\n" +
+                    "Without a clip the canvas runs instead."
             )
-            session.mode == Mode.Video -> Note("duo.mp4 found")
+            session.mode == Mode.Video -> Note("ready to play")
             session.mode == Mode.Web -> Note("The host types the address. Both phones load it.")
-            else -> Note("drag the ball across the join")
+            else -> Note("the grid is the setup and test screen")
         }
 
         if (session.mode == Mode.Web) {
@@ -210,6 +242,41 @@ private fun Label(text: String) {
     Text(text, color = Dim, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
     Spacer(Modifier.height(8.dp))
 }
+
+/**
+ * The system photo picker. It needs no storage permission, and it gives back an
+ * address we can read the clip from.
+ */
+@Composable
+private fun clipPicker(
+    onPicked: (Uri, String) -> Unit,
+): ManagedActivityResultLauncher<PickVisualMediaRequest, Uri?> {
+    val context = LocalContext.current
+    return rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) onPicked(uri, displayName(context, uri))
+    }
+}
+
+private fun pickerRequest() =
+    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+
+private fun displayName(context: Context, uri: Uri): String {
+    runCatching {
+        context.contentResolver
+            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c ->
+                if (c.moveToFirst()) {
+                    val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (i >= 0) return c.getString(i) ?: ""
+                }
+            }
+    }
+    return uri.lastPathSegment ?: "clip"
+}
+
+/** A clip name short enough for a one-line label. */
+private fun shortName(name: String, max: Int = 26): String =
+    if (name.length <= max) name else name.take(max - 1) + "…"
 
 @Composable
 private fun Note(text: String) {
@@ -560,27 +627,47 @@ private fun WebSurface(session: Session) {
 
 @Composable
 private fun LiveControls(session: Session) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(top = 14.dp)
-            .padding(horizontal = 14.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (session.isHost) {
-            StepButton("gap −") { session.setGap(session.gapMm - 0.5f) }
-            Spacer(Modifier.width(8.dp))
-            Text(
-                mm(session.gapMm),
-                color = Dim, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
-            )
-            Spacer(Modifier.width(8.dp))
-            StepButton("gap +") { session.setGap(session.gapMm + 0.5f) }
+    val pick = clipPicker { uri, name -> session.pickClip(uri, name) }
+
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (session.isHost) {
+                StepButton("gap −") { session.setGap(session.gapMm - 0.5f) }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    mm(session.gapMm),
+                    color = Dim, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
+                )
+                Spacer(Modifier.width(8.dp))
+                StepButton("gap +") { session.setGap(session.gapMm + 0.5f) }
+                Spacer(Modifier.width(14.dp))
+            }
+            // Either phone can take over the clip while the app runs.
+            StepButton(if (session.myClip == null) "PICK" else "CHANGE") {
+                pick.launch(pickerRequest())
+            }
+            if (session.videoMode && session.isHost) {
+                Spacer(Modifier.width(8.dp))
+                StepButton(if (session.playing) "❚❚" else "▶") { session.togglePlay() }
+            }
         }
-        if (session.videoMode && session.isHost) {
-            Spacer(Modifier.width(16.dp))
-            StepButton(if (session.playing) "❚❚" else "▶") { session.togglePlay() }
+        if (session.videoMode && session.clipName.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                (if (session.source == Source.Me) "serving · " else "streaming · ") +
+                    shortName(session.clipName, 40),
+                color = Faint,
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }

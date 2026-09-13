@@ -13,7 +13,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import java.io.File
 import kotlin.math.abs
 
 enum class Phase { Menu, Waiting, Live, Dead }
@@ -21,8 +20,8 @@ enum class Phase { Menu, Waiting, Live, Dead }
 /** What the two phones put on the canvas. */
 enum class Mode { Canvas, Video, Web }
 
-/** The clip both phones play. Push the same file to both phones. */
-const val VIDEO_NAME = "duo.mp4"
+/** Which phone holds the clip. The geometry role and the media role are separate. */
+enum class Source { None, Me, Peer }
 
 /** Jump to the host position when the two players drift further apart than this. */
 private const val SYNC_TOLERANCE_MS = 200L
@@ -35,22 +34,24 @@ const val DEFAULT_URL = "https://en.wikipedia.org/wiki/Foldable_smartphone"
 /** A vertical scroll order from the other phone. The counter forces a fresh apply. */
 data class ScrollCmd(val fraction: Float, val seq: Int)
 
-fun videoFile(context: Context): File? =
-    context.getExternalFilesDir(null)?.let { File(it, VIDEO_NAME) }?.takeIf { it.isFile }
-
 /**
  * Wires the transport to the shared canvas.
  *
- * The host is authoritative: it owns the ball, runs the physics, holds the
- * playback clock, and picks the mode. The client forwards its raw touches and
- * renders whatever the host says. One round trip on a hotspot is a few ms, so
- * the client's ball tracks its own finger closely enough that nobody notices.
+ * Two roles are separate and must not be confused:
+ *
+ * - **Geometry.** The host owns the left half and the clock. The client mirrors.
+ * - **Media.** Whichever phone picked a clip serves it over HTTP. Either phone
+ *   can be the media source, whatever its geometry role.
+ *
+ * One round trip on a hotspot is a few ms, so the client's ball tracks its own
+ * finger closely enough that nobody notices.
  */
 class Session(private val scope: CoroutineScope, context: Context) {
 
     private val appContext = context.applicationContext
 
     val world = World()
+    val media = MediaServer(appContext, scope)
     private var link = Link(scope)
     private var collectJob: Job? = null
 
@@ -68,16 +69,29 @@ class Session(private val scope: CoroutineScope, context: Context) {
     /** Physical gap between the two panels, in millimetres. The host owns this. */
     var gapMm by mutableFloatStateOf(3f)
 
-    /** The clip on this phone, if the file is present. */
-    val video: File? = videoFile(appContext)
-
     // --- menu choices, host only. liveMode is what actually runs. ---
-    var mode by mutableStateOf(Mode.Canvas)
+    var mode by mutableStateOf(Mode.Video)
     var url by mutableStateOf(DEFAULT_URL)
 
     var liveMode by mutableStateOf(Mode.Canvas); private set
     val videoMode: Boolean get() = liveMode == Mode.Video
     val webMode: Boolean get() = liveMode == Mode.Web
+
+    // --- the media role ---
+
+    /** Which phone holds the clip now. */
+    var source by mutableStateOf(Source.None); private set
+
+    /** The display name of the clip both phones are playing. */
+    var clipName by mutableStateOf(""); private set
+
+    /** The clip this phone picked, if any. */
+    var myClip by mutableStateOf<Uri?>(null); private set
+
+    private var myClipName = ""
+
+    /** True when this phone can start serving a clip the other one picked. */
+    val peerAddress: String? get() = link.peerIp
 
     var player: ExoPlayer? = null
         private set
@@ -88,7 +102,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
     /** Mirrors the player so the play button can follow it. */
     var playing by mutableStateOf(false); private set
 
-    /** The URL both phones load. The host owns it. */
+    /** The address both phones load. The host owns it. */
     var liveUrl by mutableStateOf(""); private set
 
     /** A vertical scroll order from the other phone. */
@@ -122,11 +136,51 @@ class Session(private val scope: CoroutineScope, context: Context) {
     fun reset() {
         link.close()
         stopPlayer()
+        media.stop()
         liveMode = Mode.Canvas
+        source = Source.None
+        clipName = ""
         link = Link(scope)
         wire()
         note = ""
         phase = Phase.Menu
+    }
+
+    /**
+     * Take a clip from the picker. This phone becomes the media source, whatever
+     * its geometry role, and the other phone starts streaming from it.
+     */
+    fun pickClip(uri: Uri, displayName: String) {
+        scope.launch {
+            if (!media.start(uri, displayName)) {
+                note = "cannot read that clip"
+                return@launch
+            }
+            myClip = uri
+            myClipName = displayName
+            source = Source.Me
+            clipName = displayName
+            if (phase == Phase.Live) {
+                link.send(JSONObject().put("t", "source").put("n", displayName))
+                if (liveMode == Mode.Video) restartPlayer()
+            }
+        }
+    }
+
+    fun clearClip() {
+        scope.launch {
+            media.stop()
+            myClip = null
+            myClipName = ""
+            if (source == Source.Me) {
+                source = Source.None
+                clipName = ""
+                if (phase == Phase.Live) {
+                    link.send(JSONObject().put("t", "source").put("n", ""))
+                    stopPlayer()
+                }
+            }
+        }
     }
 
     /** Set the gap. The host tells the client; both then use one value. */
@@ -161,11 +215,6 @@ class Session(private val scope: CoroutineScope, context: Context) {
         link.send(JSONObject().put("t", "scroll").put("f", fraction.toDouble()))
     }
 
-    private fun applyRemoteScroll(j: JSONObject) {
-        val f = j.optDouble("f", 0.0).toFloat().coerceIn(0f, 1f)
-        scrollCmd = ScrollCmd(f, ++scrollSeq)
-    }
-
     /** Called once per frame. Host simulates and broadcasts; client is a pure mirror. */
     fun tick(dt: Float) {
         if (phase != Phase.Live) return
@@ -189,7 +238,11 @@ class Session(private val scope: CoroutineScope, context: Context) {
         syncVideoIfDue()
     }
 
-    /** The host is the clock. The client corrects itself when it drifts. */
+    /**
+     * The host is the clock, whoever holds the clip. The client corrects itself
+     * when it drifts. The client may be the one serving the file — the clock and
+     * the file are separate jobs.
+     */
     private fun syncVideoIfDue() {
         val p = player ?: return
         if (!videoMode) return
@@ -231,7 +284,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
                 JSONObject().put("t", "hello")
                     .put("w", (myW / calib).toDouble())
                     .put("h", (myH / calib).toDouble())
-                    .put("v", if (video != null) 1 else 0)
+                    .put("n", myClipName)
             )
         }
     }
@@ -243,14 +296,25 @@ class Session(private val scope: CoroutineScope, context: Context) {
                 val ah = myH / calib
                 val bw = j.optDouble("w").toFloat()
                 val bh = j.optDouble("h").toFloat()
-                // Video needs the same clip on both phones. Web always works,
-                // because the client loads the page itself.
-                val use = when (mode) {
-                    Mode.Video -> if (video != null && j.optInt("v") == 1) Mode.Video else Mode.Canvas
-                    Mode.Web -> Mode.Web
-                    Mode.Canvas -> Mode.Canvas
+                val peerClip = j.optString("n")
+
+                // The host's own clip wins when both phones have one. The user can
+                // always pick again on either phone to take over.
+                val use = when {
+                    mode != Mode.Video -> Mode.Canvas
+                    myClip != null -> {
+                        source = Source.Me
+                        clipName = myClipName
+                        Mode.Video
+                    }
+                    peerClip.isNotEmpty() -> {
+                        source = Source.Peer
+                        clipName = peerClip
+                        Mode.Video
+                    }
+                    else -> Mode.Canvas
                 }
-                begin(aw, ah, bw, bh, amLeft = true, use, gapMm, url)
+                begin(aw, ah, bw, bh, amLeft = true, use, gapMm, url, source, clipName)
                 link.send(
                     JSONObject().put("t", "layout")
                         .put("aw", aw.toDouble()).put("ah", ah.toDouble())
@@ -258,6 +322,8 @@ class Session(private val scope: CoroutineScope, context: Context) {
                         .put("m", use.name.lowercase())
                         .put("url", url)
                         .put("gap", gapMm.toDouble())
+                        .put("src", if (source == Source.Me) "host" else if (source == Source.Peer) "client" else "")
+                        .put("n", clipName)
                 )
             }
 
@@ -267,14 +333,42 @@ class Session(private val scope: CoroutineScope, context: Context) {
                     "web" -> Mode.Web
                     else -> Mode.Canvas
                 }
+                when (j.optString("src")) {
+                    "client" -> {
+                        source = Source.Me
+                        clipName = myClipName
+                    }
+                    "host" -> {
+                        source = Source.Peer
+                        clipName = j.optString("n")
+                    }
+                    else -> {
+                        source = Source.None
+                        clipName = ""
+                    }
+                }
                 begin(
                     j.optDouble("aw").toFloat(), j.optDouble("ah").toFloat(),
                     j.optDouble("bw").toFloat(), j.optDouble("bh").toFloat(),
-                    amLeft = false,
-                    use = if (m == Mode.Video && video == null) Mode.Canvas else m,
+                    amLeft = false, use = if (m == Mode.Video && source == Source.None) Mode.Canvas else m,
                     gap = j.optDouble("gap", 3.0).toFloat(),
                     url = j.optString("url"),
+                    src = source, name = clipName,
                 )
+            }
+
+            // The other phone picked a clip. It now serves, and we stream from it.
+            "source" -> {
+                val n = j.optString("n")
+                if (n.isEmpty()) {
+                    source = Source.None
+                    clipName = ""
+                    stopPlayer()
+                } else {
+                    source = Source.Peer
+                    clipName = n
+                    if (phase == Phase.Live && liveMode == Mode.Video) restartPlayer()
+                }
             }
 
             "gap" -> if (!isHost) {
@@ -284,7 +378,11 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
             "vid" -> if (!isHost) followHost(j)
 
-            "scroll" -> applyRemoteScroll(j)
+            "scroll" -> if (!isHost) {
+                scrollCmd = ScrollCmd(
+                    j.optDouble("f", 0.0).toFloat().coerceIn(0f, 1f), ++scrollSeq,
+                )
+            }
 
             "ball" -> if (!isHost) {
                 world.applyRemote(
@@ -316,10 +414,13 @@ class Session(private val scope: CoroutineScope, context: Context) {
     private fun begin(
         aw: Float, ah: Float, bw: Float, bh: Float,
         amLeft: Boolean, use: Mode, gap: Float, url: String,
+        src: Source, name: String,
     ) {
         gapMm = gap.coerceIn(0f, 20f)
         liveMode = use
         liveUrl = url
+        source = src
+        clipName = name
         world.layout(aw, ah, bw, bh, amLeft)
         world.setGapMm(gapMm)
         world.place(world.totalW / 2f, world.h / 2f)
@@ -328,15 +429,27 @@ class Session(private val scope: CoroutineScope, context: Context) {
         phase = Phase.Live
     }
 
+    private fun restartPlayer() {
+        stopPlayer()
+        if (liveMode == Mode.Video) startPlayer()
+    }
+
     private fun startPlayer() {
-        val f = video ?: return
         if (player != null) return
+        val item = when (source) {
+            Source.Me -> myClip?.let { MediaItem.fromUri(it) }
+            Source.Peer -> link.peerIp?.let {
+                MediaItem.fromUri("http://$it:$MEDIA_PORT$MEDIA_PATH")
+            }
+            Source.None -> null
+        } ?: return
+
         player = ExoPlayer.Builder(appContext).build().apply {
             repeatMode = Player.REPEAT_MODE_ALL
-            setMediaItem(MediaItem.fromUri(Uri.fromFile(f)))
-            // Two phones playing one clip in the same room would echo. Only the
-            // host makes sound.
-            volume = if (isHost) 1f else 0f
+            setMediaItem(item)
+            // Only the phone that holds the clip makes sound. Two phones in one
+            // room playing the same audio a few ms apart would echo.
+            volume = if (source == Source.Me) 1f else 0f
             playWhenReady = isHost
             prepare()
         }

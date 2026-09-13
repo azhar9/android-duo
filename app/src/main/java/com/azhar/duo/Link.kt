@@ -64,6 +64,10 @@ class Link(private val scope: CoroutineScope) {
     private var job: Job? = null
     private var writerJob: Job? = null
 
+    /** The address of the other phone. The streamer needs it to fetch the clip. */
+    var peerIp: String? = null
+        private set
+
     fun host() {
         job = scope.launch(Dispatchers.IO) {
             try {
@@ -109,10 +113,12 @@ class Link(private val scope: CoroutineScope) {
         writerJob?.cancel()
         runCatching { socket?.close() }
         socket = null
+        peerIp = null
     }
 
     private suspend fun attach(s: Socket, isHost: Boolean) {
         socket = s
+        peerIp = s.inetAddress?.hostAddress
         s.tcpNoDelay = true            // 60Hz of small frames — Nagle would add 40ms for nothing
 
         val w = BufferedWriter(OutputStreamWriter(s.getOutputStream(), Charsets.UTF_8))
