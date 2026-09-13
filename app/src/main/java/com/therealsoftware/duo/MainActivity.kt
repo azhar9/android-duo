@@ -734,7 +734,9 @@ private fun LiveBar(session: Session, web: WebView?, modifier: Modifier = Modifi
                 BarButton("+") { session.setGap(session.gapMm + 0.5f) }
                 Spacer(Modifier.width(10.dp))
             }
-            BarButton(if (session.myClip == null) "Clip" else "Swap") {
+            // One name, because it does one job. It used to say "Swap", which
+            // reads as swapping between the phones and swaps nothing.
+            BarButton(if (session.myClip == null) "Clip" else "Change clip") {
                 pick.launch(pickerRequest())
             }
         }

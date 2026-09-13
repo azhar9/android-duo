@@ -280,22 +280,6 @@ class Session(private val scope: CoroutineScope, context: Context) {
         }
     }
 
-    fun clearClip() {
-        scope.launch {
-            media.stop()
-            myClip = null
-            myClipName = ""
-            if (source == Source.Me) {
-                source = Source.None
-                clipName = ""
-                if (phase == Phase.Live) {
-                    link.send(JSONObject().put("t", "source").put("n", ""))
-                    stopPlayer()
-                }
-            }
-        }
-    }
-
     /**
      * Take a picture or a document from the picker. This phone renders it and
      * sends the other phone its half, exactly as the host does for a web page.
@@ -482,15 +466,17 @@ class Session(private val scope: CoroutineScope, context: Context) {
                 // A phone running older code may not speak the same protocol at
                 // all, so this is checked before anything else.
                 if (j.optLong("b", -1L) != buildStamp) {
-                    note = "The two phones are running different versions of Duo. " +
-                        "Install the same build on both, then try again."
-                    phase = Phase.Dead
+                    refuse(
+                        "The two phones are running different versions of Duo. " +
+                            "Install the same build on both, then try again."
+                    )
                     return@onMsg
                 }
                 if (j.optInt("p", -1) != (if (isPortrait) 1 else 0)) {
-                    note = "Both phones must be held the same way. " +
-                        "One is tall, the other is wide. Turn one round and try again."
-                    phase = Phase.Dead
+                    refuse(
+                        "Both phones must be held the same way. " +
+                            "One is tall, the other is wide. Turn one round and try again."
+                    )
                     return@onMsg
                 }
                 val aw = myW / calib
@@ -596,6 +582,11 @@ class Session(private val scope: CoroutineScope, context: Context) {
                 world.place(world.totalW / 2f, world.h / 2f)
             }
 
+            "refuse" -> if (!isHost) {
+                note = j.optString("why")
+                phase = Phase.Dead
+            }
+
             "vid" -> if (!isHost) followHost(j)
 
             "cmd" -> if (isHost) {
@@ -652,6 +643,19 @@ class Session(private val scope: CoroutineScope, context: Context) {
     }
 
     private fun myPicturePicked() = pictureUri != null
+
+    /**
+     * Say no, and say it to the other phone as well.
+     *
+     * Refusing silently leaves the other handset waiting for a reply that never
+     * comes, so it sits on "looking for the other phone" for ever. A refusal is
+     * a message, not an absence of one.
+     */
+    private fun refuse(why: String) {
+        note = why
+        phase = Phase.Dead
+        link.send(JSONObject().put("t", "refuse").put("why", why))
+    }
 
     private fun begin(
         aw: Float, ah: Float, bw: Float, bh: Float,

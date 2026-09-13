@@ -82,6 +82,9 @@ class FrameServer(private val scope: CoroutineScope, private val ports: Ports) {
     private var out: OutputStream? = null
 
     @Volatile
+    private var server: ServerSocket? = null
+
+    @Volatile
     var connected: Boolean = false
         private set
 
@@ -90,7 +93,7 @@ class FrameServer(private val scope: CoroutineScope, private val ports: Ports) {
         job = scope.launch(Dispatchers.IO) {
             // One server socket for the whole session. Binding again between
             // viewers would leave a window where a reconnect is refused.
-            val server = try {
+            val listening = try {
                 ServerSocket().apply {
                     reuseAddress = true
                     bind(InetSocketAddress(ports.frames))
@@ -99,10 +102,11 @@ class FrameServer(private val scope: CoroutineScope, private val ports: Ports) {
                 Log.i(TAG, "cannot listen on ${ports.frames}: ${e.message}")
                 return@launch
             }
+            server = listening
             try {
                 while (isActive) {
                     val s = try {
-                        server.accept()
+                        listening.accept()
                     } catch (_: Exception) {
                         break
                     }
@@ -120,7 +124,8 @@ class FrameServer(private val scope: CoroutineScope, private val ports: Ports) {
                     }
                 }
             } finally {
-                runCatching { server.close() }
+                server = null
+                runCatching { listening.close() }
             }
         }
     }
@@ -140,6 +145,13 @@ class FrameServer(private val scope: CoroutineScope, private val ports: Ports) {
     fun stop() {
         job?.cancel()
         job = null
+        // Close the listener here rather than leaving it to the coroutine's
+        // finally. Cancelling does not take effect straight away, and a new
+        // session can reach bind() before the old socket has let go of the
+        // port — which is the EADDRINUSE. Closing it from here is immediate
+        // and cannot lose the race.
+        runCatching { server?.close() }
+        server = null
         runCatching { out?.close() }
         out = null
         connected = false

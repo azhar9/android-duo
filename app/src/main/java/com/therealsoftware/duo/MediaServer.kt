@@ -39,6 +39,7 @@ class MediaServer(context: Context, private val scope: CoroutineScope, private v
     private val appContext = context.applicationContext
 
     private var job: Job? = null
+    private var server: ServerSocket? = null
     private var uri: Uri? = null
     private var cached: File? = null
     private var length = 0L
@@ -59,21 +60,27 @@ class MediaServer(context: Context, private val scope: CoroutineScope, private v
         if (!prepare(u)) return false
         name = displayName
         job = scope.launch(Dispatchers.IO) {
-            try {
+            val listening = try {
                 ServerSocket().apply {
                     reuseAddress = true
                     bind(InetSocketAddress(ports.media))
-                }.use { server ->
-                    while (isActive) {
-                        val s = try {
-                            server.accept()
-                        } catch (_: Exception) {
-                            break
-                        }
-                        launch(Dispatchers.IO) { runCatching { serve(s) } }
-                    }
                 }
             } catch (_: Exception) {
+                return@launch
+            }
+            server = listening
+            try {
+                while (isActive) {
+                    val s = try {
+                        listening.accept()
+                    } catch (_: Exception) {
+                        break
+                    }
+                    launch(Dispatchers.IO) { runCatching { serve(s) } }
+                }
+            } finally {
+                server = null
+                runCatching { listening.close() }
             }
         }
         return true
@@ -82,6 +89,11 @@ class MediaServer(context: Context, private val scope: CoroutineScope, private v
     fun stop() {
         job?.cancel()
         job = null
+        // Closed here, not in the coroutine, for the same reason as the frame
+        // server: a new session must not reach bind() while this one still
+        // holds the port.
+        runCatching { server?.close() }
+        server = null
         uri = null
         cached = null
         length = 0L
