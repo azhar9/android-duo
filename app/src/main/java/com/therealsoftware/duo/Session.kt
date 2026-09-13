@@ -91,6 +91,9 @@ private const val SYNC_STRIKES = 2
 
 const val DEFAULT_URL = "https://www.google.com"
 
+/** How far down a page a phone has scrolled, in page pixels. */
+data class Scroll(val x: Int, val y: Int)
+
 /**
  * Wires the transport to the shared canvas.
  *
@@ -157,7 +160,8 @@ class Session(private val scope: CoroutineScope, context: Context) {
      */
     val servesFrames: Boolean
         get() = when (liveMode) {
-            Mode.Web -> isHost
+            // A page is rendered by both phones. Nobody sends pictures of it.
+            Mode.Web -> false
             Mode.Picture -> source == Source.Me
             else -> false
         }
@@ -197,8 +201,11 @@ class Session(private val scope: CoroutineScope, context: Context) {
     /** Mirrors the player so the play button can follow it. */
     var playing by mutableStateOf(false); private set
 
-    /** The address both phones load. The host owns it. */
+    /** The address both phones load. Either phone can change it. */
     var liveUrl by mutableStateOf(""); private set
+
+    /** Where the other phone has scrolled to. The page here follows it. */
+    var peerScroll by mutableStateOf<Scroll?>(null); private set
 
     /** Names the clip this phone holds, so the other phone caches it apart. */
     private fun myClipToken(): String = myClip?.toString()?.hashCode()?.toString() ?: ""
@@ -374,6 +381,25 @@ class Session(private val scope: CoroutineScope, context: Context) {
                     .put("seek", seekMs ?: -1L)
             )
         }
+    }
+
+    /**
+     * Where this phone has scrolled to. The other phone moves to match, so the
+     * two halves of the page stay on the same lines.
+     */
+    fun sendScroll(x: Int, y: Int) {
+        link.send(JSONObject().put("t", "scroll").put("x", x).put("y", y))
+    }
+
+    /**
+     * Either phone can follow a link. The one that moved says where it landed,
+     * and the other loads the same address.
+     */
+    fun sendUrl(u: String) {
+        if (u.isEmpty() || u == liveUrl) return
+        liveUrl = u
+        url = u
+        link.send(JSONObject().put("t", "url").put("u", u))
     }
 
     fun touch(x: Float, y: Float, down: Boolean) {
@@ -585,6 +611,18 @@ class Session(private val scope: CoroutineScope, context: Context) {
                     clipName = n
                     peerClipKey = j.optString("k")
                     if (phase == Phase.Live && liveMode == Mode.Video) restartPlayer()
+                }
+            }
+
+            "scroll" -> if (phase == Phase.Live) {
+                peerScroll = Scroll(j.optInt("x"), j.optInt("y"))
+            }
+
+            "url" -> if (phase == Phase.Live) {
+                val u = j.optString("u")
+                if (u.isNotEmpty()) {
+                    liveUrl = u
+                    url = u
                 }
             }
 

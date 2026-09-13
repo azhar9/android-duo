@@ -143,8 +143,10 @@ testers before going to production. Start one, put the two phones on it, and use
 the app properly for a few days. Every mode, both axes, both orientations, a
 long video, a short one, a page that works and a page that does not.
 
-The one thing I could not test from here: **the web mode's zoom.** See the
-README. Test that specifically.
+The one thing to look at hard: **the join in web mode.** The two halves are two
+renders of one page, so a page that shows something different on each phone —
+a cookie banner, a different advert, a sign-in state — will not meet at the
+seam. Open a few real pages and watch the join. See the README for the rest.
 
 ## 9. Release
 

@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -554,10 +555,10 @@ private fun LiveScreen(session: Session) {
 
         Box(Modifier.fillMaxSize()) {
             when {
-                session.webMode && session.servesFrames ->
-                    RemoteHostSurface(session) { webView = it }
+                // Both phones render the page. This is the whole of web mode.
+                session.webMode -> PageSurface(session) { webView = it }
                 session.pictureMode && session.servesFrames -> PictureHostSurface(session)
-                session.webMode || session.pictureMode -> RemoteViewerSurface(session)
+                session.pictureMode -> RemoteViewerSurface(session)
                 session.videoMode -> VideoSurface(session)
             }
 
@@ -682,6 +683,7 @@ private fun LiveBar(session: Session, web: WebView?, modifier: Modifier = Modifi
             if (u != shown && !u.startsWith("about:")) {
                 shown = u
                 typed = u
+                session.sendUrl(u)
             }
             delay(400)
         }
@@ -693,7 +695,7 @@ private fun LiveBar(session: Session, web: WebView?, modifier: Modifier = Modifi
             .padding(horizontal = 16.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (session.webMode && session.isHost && web != null) {
+        if (session.webMode && web != null) {
             BrowserBar(web, typed) { typed = it }
             Spacer(Modifier.height(8.dp))
         }
@@ -924,44 +926,61 @@ private fun VideoSurface(session: Session) {
 }
 
 /**
- * The host renders the page once, at the size of the whole canvas, and shows
- * its own half. It also crops the other half and streams it, so the viewer never
- * lays the page out at all.
+ * The page, rendered by this phone, showing this phone's slice of it.
  *
- * That is why any page works here, and why a video on the page plays with sound:
- * the host is an ordinary single browser on an ordinary single device.
+ * Both phones run their own browser for the same address. Each lays the page
+ * out at the width of the whole canvas and scrolls to the part it owns, so the
+ * page still reads as one wide window across the two screens.
+ *
+ * The view stays the size of the screen. A WebView laid out wider than the
+ * display does not draw the part of itself that is off the display — and that
+ * part is the half the other phone is looking at.
+ *
+ * Only two small things travel between the phones: how far the page has been
+ * scrolled, and the address when someone follows a link. Nothing streams, so
+ * the page stays sharp and moves at the speed of the phone it is on.
+ *
+ * The other way — one phone rendering the page and sending pictures of it —
+ * was ten stills a second of JPEG, and the phone that was not rendering could
+ * not scroll at all. A page is a live thing. Let both phones keep it live.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun RemoteHostSurface(session: Session, onWeb: (WebView) -> Unit) {
+private fun PageSurface(session: Session, onWeb: (WebView) -> Unit) {
     val world = session.world
     val density = LocalDensity.current.density
     val calib = session.calib
     val url = session.liveUrl
 
     var web by remember { mutableStateOf<WebView?>(null) }
-    var mine by remember { mutableStateOf<ImageBitmap?>(null) }
 
-    // The page is laid out once, at the size of the whole canvas.
-    val fullW = (world.totalW * calib).dp
-    val fullH = (world.h * calib).dp
-    val layoutW = world.totalW
+    // The page is laid out at the width of the whole canvas, and this phone
+    // looks at its own slice of that.
+    val layoutW = world.totalW * calib
+    val intoX = (world.sliceX * calib * density).toInt()
+    val intoY = (world.sliceY * calib * density).toInt()
 
-    val cut = remember { FrameCutter() }
+    // How far the page has been scrolled, apart from this phone's slice.
+    val scrollOf: (Int) -> Int = { y -> y - intoY }
+
+    // The scroll last taken from the other phone. A change that matches it is
+    // the echo of that move, not one of ours, and must not be sent back.
+    var fromPeer by remember { mutableStateOf<Scroll?>(null) }
+    var loaded by remember { mutableIntStateOf(0) }
 
     Box(Modifier.fillMaxSize().clipToBounds().background(Night)) {
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
                     settings.javaScriptEnabled = true
-                    // false, not true. With it on, the WebView honours the page's
-                    // own viewport and picks its own zoom — which was measured at
-                    // 137%, so the page came out wider than both screens and the
-                    // right edge was lost. With it off the WebView lays the page
-                    // out at a fixed width and scales it to fit the view, so the
-                    // page always fills the canvas exactly.
-                    settings.useWideViewPort = false
-                    settings.loadWithOverviewMode = true
+                    // true, so the page keeps the width it is told and runs off
+                    // the side of the screen. False would make the WebView lay
+                    // the page out at the width of one phone, and then the two
+                    // halves would be two different pages.
+                    settings.useWideViewPort = true
+                    // false, so the page is not shrunk to fit the screen. The
+                    // whole point is that it is wider than one phone.
+                    settings.loadWithOverviewMode = false
                     settings.builtInZoomControls = false
                     settings.displayZoomControls = false
                     settings.mediaPlaybackRequiresUserGesture = false
@@ -978,7 +997,16 @@ private fun RemoteHostSurface(session: Session, onWeb: (WebView) -> Unit) {
                                     "m.setAttribute('content','width=$layoutW, initial-scale=1');})()",
                                 null,
                             )
+                            loaded++
                         }
+                    }
+                    setOnScrollChangeListener { view, x, y, _, _ ->
+                        // Sideways is not the user's to move: this phone's slice
+                        // is fixed, and letting the page slide would break the
+                        // seam. Only the page scroll travels between phones.
+                        if (x != intoX) view.scrollTo(intoX, y)
+                        val mine = scrollOf(y)
+                        if (fromPeer?.y != mine) session.sendScroll(0, mine)
                     }
                     if (url.isNotEmpty()) loadUrl(url)
                     web = this
@@ -986,35 +1014,18 @@ private fun RemoteHostSurface(session: Session, onWeb: (WebView) -> Unit) {
                 }
             },
             update = { v -> if (url.isNotEmpty() && v.url != url) v.loadUrl(url) },
-            // requiredSize, not size: a plain size is clamped by the parent.
-            modifier = Modifier.requiredSize(fullW, fullH),
+            modifier = Modifier.fillMaxSize(),
         )
-
-        // Both halves are cut from one render, so they always agree. The WebView
-        // is never seen — this picture covers it.
-        mine?.let {
-            Image(it, null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
-        }
     }
 
-    LaunchedEffect(url, fullW, fullH) {
-        var view: WebView? = null
-        while (isActive) {
-            delay(1000L / REMOTE_FPS)
-            // The factory above can run after this effect starts. Keep looking
-            // rather than giving up once.
-            if (view == null) view = web
-            val v = view ?: continue
-            if (v.width <= 0 || v.height <= 0) continue
-            // Drawing must happen on the main thread. Writing to a socket must
-            // not: Android stops the app for network work on the main thread.
-            val shot = withContext(Dispatchers.Main) { cut.capture(v, world, density * calib) }
-                ?: continue
-            mine = shot.mine.asImageBitmap()
-            if (shot.peer != null && session.streamer.connected) {
-                withContext(Dispatchers.IO) { session.streamer.send(shot.peer) }
-            }
-        }
+    val peer = session.peerScroll
+    // Runs again when the slice moves or the page arrives, because a page that
+    // is still loading cannot be scrolled.
+    LaunchedEffect(peer, web, loaded, intoX, intoY) {
+        val v = web ?: return@LaunchedEffect
+        val mine = peer?.y ?: 0
+        fromPeer = Scroll(0, mine)
+        v.scrollTo(intoX, mine + intoY)
     }
 }
 

@@ -17,7 +17,7 @@ The app has three modes. The host picks the mode. Both phones then follow it.
 |---|---|
 | Grid | A grid and a ball. Drag the ball from one phone to the other. This is the setup screen: use it to set the gap and check the alignment. |
 | Video | One video file. Either phone can serve it; the other streams it. |
-| Web | One web page. The host lays it out once and streams the picture. |
+| Web | One web page. Both phones run a browser and each shows its own half. |
 | File | A photo or a PDF. The whole page is shown across both screens. |
 
 This project takes its idea from foldable phones and dual-screen phones. The
@@ -190,26 +190,32 @@ four edges and a document keeps its footer. A PDF shows one page at a time;
 
 Android renders PDF pages itself, so a document needs no extra library.
 
-**Web.** The host types an address, or types words to search. That phone lays
-the page out once, shows its own half, and streams the other half as pictures.
-The bar at the bottom of the host has Back, the current address, and Go.
+**Web.** Both phones run a browser. Each lays the page out at the width of the
+whole canvas and looks at its own half of it, the way a window looks at part of
+a wide page. Type an address on either phone, or type words to search; both
+phones carry Back, the current address, and Go.
 
-Only one phone runs a browser, so the two halves cannot disagree about layout.
-This is also why a video on the page plays with sound: the host is an ordinary
+Scroll on either phone and the other follows. Text is real text, sharp at any
+size, and it moves at the speed of the phone it is on.
+
+What travels between the phones is only how far the page has been scrolled, and
+the address when someone follows a link. Nothing is sent as a picture.
+
+This is also why a video on the page plays with sound: each phone is an ordinary
 browser on an ordinary device, and its sound simply plays.
 
-The picture travels as a JPEG for each frame, about 10 each second. On a local
-network that is roughly 1 MB for each second. Text is slightly soft because it
-is a picture of text.
+**The limit of this approach.** The two halves are two renders of the same page,
+not one render cut in two. A page that shows something different on each phone —
+a cookie banner, a different advert, a sign-in state, an image that loaded late —
+will not match at the seam. A page that lays out from its own content alone will
+match, and articles and search results do.
 
-**Known limitation — web mode is the experimental one.** Android's WebView
-chooses its own zoom, and it does not always honour the width we ask for. The
-page can render wider than the two screens together, so the far right is cut
-off. The two halves still agree with each other, because both are cut from one
-render, but the page may not fit.
+Two other things follow. Each phone fetches the page itself, so the page is
+downloaded twice. And a phone that is set to a different text size in its own
+settings will lay the text out differently, which shows at the seam.
 
-Set the size on both phones before you start. Then open something wide and
-visual to see whether the page lands where you expect.
+Set the gap between the screens before you start. Open a page of text and check
+that a line runs across the join.
 
 
 ## How the phones sit
@@ -295,7 +301,22 @@ The app scales the video on each phone by the same amount, and moves it by the
 width of that phone's slice. The test proves that the hidden band equals the
 physical gap.
 
-### The web picture
+### The web page
+
+Each phone runs its own browser. The page is told to lay out at the width of the
+whole canvas, which makes it wider than one phone, and each phone looks at its
+own part of it.
+
+The view stays the size of the screen. A WebView laid out wider than the display
+does not draw the part of itself that is off the display, and that part is the
+half the other phone is looking at. The phone scrolls sideways to its own slice
+instead, and holds itself there.
+
+Two small messages keep the halves together: where the page has been scrolled
+to, and the address when someone follows a link. Each phone sends its own scroll
+and follows the other's.
+
+### The picture, sent as frames
 
 `FrameServer` takes one ServerSocket for the whole session and holds it open.
 Binding again between viewers would leave a window where a reconnect is refused.
@@ -304,9 +325,10 @@ Each frame is a four-byte length and then the picture. A socket delivers bytes
 in arbitrary pieces, so without a length the reader cannot tell a whole frame
 from half of one.
 
-The host draws the page into one bitmap and cuts both halves out of it, so the
-two halves always agree. It reuses that bitmap for every frame — making a
-four-megapixel bitmap ten times a second would bury the collector.
+For a photo or a page of a PDF, the phone that holds it draws it into one bitmap
+and cuts both halves out of it, so the two halves always agree. It reuses that
+bitmap for every frame — making a four-megapixel bitmap ten times a second would
+bury the collector.
 
 ### The host is the clock
 
@@ -327,13 +349,14 @@ app/src/main/java/com/therealsoftware/duo/
   Link.kt          The discovery and the network connection.
   MediaServer.kt   Serves the picked clip to the other phone over HTTP.
   Range.kt         Reads HTTP Range headers. Pure, so it is testable.
-  Stream.kt        Sends the rendered page to the other phone as frames.
+  Stream.kt        Sends a rendered picture to the other phone as frames.
   Session.kt       The connection between the network, the media, and the canvas.
-  MainActivity.kt  The user interface, the video surface, and the web surfaces.
+  MainActivity.kt  The user interface, and the surfaces for video, a page, and a picture.
 app/src/test/java/com/therealsoftware/duo/
   WorldTest.kt     Thirty tests for the geometry and the physics.
   RangeTest.kt     Thirteen tests for byte ranges.
   StreamTest.kt    Ten tests for the frame protocol.
+  MediaUrlTest.kt  Three tests for the address a clip is streamed from.
 ```
 
 `World.kt` has no Android imports. You can thus test the geometry and the
@@ -346,17 +369,26 @@ The two phones trade JSON messages on one TCP socket.
 | Direction | Message |
 |---|---|---|
 | client to host | `{"t":"hello","w":<width>,"h":<height>,"n":"<clip name>"}` |
-| host to client | `{"t":"layout","aw":..,"ah":..,"bw":..,"bh":..,"m":"<mode>","url":"..","gap":..,"ax":"<axis>","src":"<who holds the clip>","n":".."}` |
+| host to client | `{"t":"layout","aw":..,"ah":..,"bw":..,"bh":..,"m":"<mode>","url":"..","gap":..,"ax":"<axis>","src":"<who holds the clip>","n":"..","k":".."}` |
 | host to client | `{"t":"ball","x":..,"y":..,"vx":..,"vy":..}` for each frame |
 | host to client | `{"t":"vid","p":<position ms>,"r":<playing>}` |
 | client to host | `{"t":"touch","x":..,"y":..,"d":<down>}` |
 | either to either | `{"t":"gap","mm":<gap>}` |
 | either to either | `{"t":"axis","a":"<Horizontal or Vertical>"}` |
-| either to either | `{"t":"source","n":"<clip name>"}` |
-| either to either | `{"t":"scroll","f":<fraction>}` |
+| either to either | `{"t":"source","n":"<clip name>","k":".."}` |
+| either to either | `{"t":"scroll","x":<page x>,"y":<page y>}` |
+| either to either | `{"t":"url","u":"<address>"}` |
 
 The clip itself does not travel on this socket. It goes over HTTP, on its own
 port, so the player can ask for ranges.
+
+`k` names the clip in the address the other phone streams from. The receiving
+phone keeps what it downloads under that address, so a different clip has to be
+a different address. Without it, the phone plays the first clip it ever fetched,
+for every clip after it. `MediaUrlTest` holds that rule.
+
+`scroll` and `url` carry web mode. Each phone sends where it has scrolled to and
+follows the other's; a phone that has just followed one does not send it back.
 
 Both phones calculate the same layout from the same four numbers. The layout
 message is thus only a sync point.
@@ -425,10 +457,10 @@ fault, and the same correction.
   screen shows the IP address of the host.
 - The app does not change the system. It cannot show other apps across the two
   screens.
-- In web mode the page may not reach the far edge of the canvas, because WebView
-  chooses its own zoom.
-- The picture in web mode is a JPEG for each frame, so fine text is softer than
-  real text.
+- In web mode the two halves are two renders of one page. A page that shows
+  something different on each phone will not meet at the seam.
+- Each phone fetches the page itself in web mode, so the page is downloaded
+  twice.
 - The two phones must sit at the same height. The app does not correct a
   vertical offset.
 
@@ -439,8 +471,8 @@ fault, and the same correction.
 - Correct the vertical alignment. The two phones can sit at different heights.
 - Connect more than two phones. `World.kt` already divides the canvas into any
   number of parts. `Link.kt` is the part that assumes two phones.
-- Encode the web picture as H.264 instead of JPEG. That would cut the bandwidth
-  several times over and make the text sharper.
+- Send the picture as H.264 instead of JPEG. That would cut the bandwidth
+  several times over and make a film on a page sharper.
 - Show a different source on each phone, and move an object between them.
 
 ## Documents

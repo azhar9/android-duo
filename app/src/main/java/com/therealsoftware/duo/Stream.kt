@@ -18,9 +18,6 @@ import java.net.Socket
 
 private const val TAG = "DuoStream"
 
-/** Frames each second for the remote display. */
-const val REMOTE_FPS = 10L
-
 /** A frame larger than this is a protocol error, not a picture. */
 private const val MAX_FRAME = 8 * 1024 * 1024
 
