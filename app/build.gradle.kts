@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.util.TimeZone
 
 /**
  * The version comes from git. A tag `v1.2.3` becomes versionName 1.2.3, and the
@@ -24,6 +25,12 @@ fun gitOutput(vararg args: String): String? = try {
 
 val gitTag = gitOutput("describe", "--tags", "--abbrev=0")
 val gitCommits = gitOutput("rev-list", "--count", "HEAD")?.toIntOrNull() ?: 0
+val gitCommit = gitOutput("rev-parse", "--short", "HEAD") ?: "unknown"
+
+// A build from a tree with unsaved work is not the commit it names. Say so, or
+// an APK built by hand looks like one built from that commit.
+val gitDirty = gitOutput("status", "--porcelain") != null
+val commitLabel = if (gitDirty) "$gitCommit+dirty" else gitCommit
 
 val appVersionName = gitTag?.removePrefix("v")?.takeIf { it.isNotEmpty() } ?: "0.0.0-dev"
 val appVersionCode = 1 + gitCommits
@@ -66,6 +73,11 @@ android {
         // changes on every compile, and two phones carrying the same file carry
         // the same number.
         buildConfigField("long", "BUILD_TIME", System.currentTimeMillis().toString() + "L")
+
+        // The build's own zone. Both phones then print the same stamp, whatever
+        // each phone is set to.
+        buildConfigField("String", "BUILD_ZONE", "\"${TimeZone.getDefault().id}\"")
+        buildConfigField("String", "GIT_COMMIT", "\"$commitLabel\"")
     }
 
     buildFeatures {

@@ -44,10 +44,19 @@ setup screen. Two pairs of phones on one network must use different channels,
 or they will fight over the same ports and the second pair will fail for
 reasons that look like magic.
 
-Both phones must also be running the **same build**. The setup screen shows
-when this one was compiled, and the app refuses to start when the two do not
-match — an older build may not speak the same protocol, and the failure would
-otherwise look like a broken picture.
+Both phones must also be running the **same build**. The setup screen shows the
+version, the commit it was built from, and the time of the build:
+
+```
+1.0.0 (30)  ·  b742b21
+Built 13 Sep 2026, 13:52 EDT
+```
+
+The app refuses to start when the two do not match — an older build may not
+speak the same protocol, and the failure would otherwise look like a broken
+picture. The time is shown in the zone the build was made in, so both phones
+print the same line whatever each phone is set to. A `+dirty` after the commit
+means the build came from a tree with unsaved work, and is not that commit.
 
 The channel is shown before you start. Pair one uses channel 1, pair two uses
 channel 2, and so on.

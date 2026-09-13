@@ -402,11 +402,21 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
 
         Spacer(Modifier.height(16.dp))
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            val built = remember {
-                java.text.SimpleDateFormat("d MMM yyyy, HH:mm", Locale.US)
-                    .format(java.util.Date(session.buildStamp))
+            val stamp = remember {
+                // The build's own zone, not this phone's, so the two phones show
+                // the same line. Without it a phone set to another zone appears
+                // to hold a different build.
+                val clock = java.text.SimpleDateFormat("d MMM yyyy, HH:mm z", Locale.US)
+                    .apply { timeZone = java.util.TimeZone.getTimeZone(BuildConfig.BUILD_ZONE) }
+                "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})" +
+                    "  \u00b7  ${BuildConfig.GIT_COMMIT}\n" +
+                    "Built ${clock.format(java.util.Date(session.buildStamp))}"
             }
-            Text("Version built $built", fontSize = 13.sp, color = Sub)
+            Text(
+                stamp,
+                fontSize = 13.sp, color = Sub, lineHeight = 18.sp,
+                textAlign = TextAlign.Center,
+            )
         }
 
         Spacer(Modifier.height(12.dp))
