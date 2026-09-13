@@ -6,13 +6,20 @@ Two Android phones act as one screen. A fun little project.
 
 ## What this app does
 
-Duo shows one canvas on two phones. Each phone shows one half of the canvas.
+Duo puts one canvas across two phones. Each phone shows one half of that canvas.
 Move an object across the join. The object continues on the other phone.
 
-This project takes its idea from foldable phones and dual-screen phones.
-The Samsung Fold has one panel in one body. The Microsoft Surface Duo has two
-panels in one body. Duo does the same job with two separate phones and a WiFi
-link.
+The app has three modes. The host picks the mode. Both phones then follow it.
+
+| Mode | What the two phones show |
+|---|---|
+| Canvas | A grid and a ball. Drag the ball from one phone to the other. |
+| Video | One video file. Each phone shows its own half of the picture. |
+| Web | One web page. Each phone shows its own half of the page. |
+
+This project takes its idea from foldable phones and dual-screen phones. The
+Samsung Fold has one panel in one body. The Microsoft Surface Duo has two panels
+in one body. Duo does the same job with two separate phones and a WiFi link.
 
 ## What this app does not do
 
@@ -21,8 +28,8 @@ can do this.
 
 - A phone sends display data. A phone does not receive display data.
 - A USB-C cable carries no video between two phones.
-- The Samsung Fold uses one panel in one body. Two phones have two panels in
-  two bodies.
+- The Samsung Fold uses one panel in one body. Two phones have two panels in two
+  bodies.
 
 Duo does the nearest useful thing. One app runs on both phones. Both phones
 share one coordinate space. Each phone draws its own part of that space.
@@ -32,7 +39,10 @@ share one coordinate space. Each phone draws its own part of that space.
 - Two Android phones with Android 13 or later.
 - One WiFi network for both phones. One phone can supply a hotspot.
 - A computer with JDK 17 or later and the Android SDK. You need the computer
-  only to build the app.
+  only to build and install the app.
+
+A USB cable gives the two phones no network between them. Use the cable only to
+install the app.
 
 ## Build the app
 
@@ -56,8 +66,15 @@ Use ADB:
 ./gradlew :app:installDebug
 ```
 
-MIUI on Xiaomi phones blocks this command. The message is
-`INSTALL_FAILED_USER_RESTRICTED`. Install the APK by hand instead:
+MIUI on Xiaomi phones can block this command. The message is
+`INSTALL_FAILED_USER_RESTRICTED`. Do these steps:
+
+1. Open Settings.
+2. Open Additional settings, then Developer options.
+3. Turn on **Install via USB**.
+4. Run the install command again.
+
+If the command still fails, install the APK by hand:
 
 1. Copy the APK to the phone.
 2. Open the Files app.
@@ -65,15 +82,35 @@ MIUI on Xiaomi phones blocks this command. The message is
 4. Permit the installation from unknown sources.
 5. Touch Install.
 
+## Put the video on both phones
+
+The video mode needs one clip on each phone. The app looks for this exact path:
+
+```
+/sdcard/Android/data/com.azhar.duo/files/duo.mp4
+```
+
+Push your clip to both phones:
+
+```
+adb -s <serial> push myvideo.mp4 /sdcard/Android/data/com.azhar.duo/files/duo.mp4
+```
+
+Use a wide clip. The video fills the width of the two screens together. A tall
+clip is cropped at the top and the bottom.
+
+The menu shows "duo.mp4 found" when the app finds the file. Choose the Canvas
+mode if the file is absent. The app falls back to the Canvas mode by itself.
+
 ## Run the demo
 
-1. Connect both phones to the same WiFi network. One phone can supply a
-   hotspot.
+1. Connect both phones to the same WiFi network. One phone can supply a hotspot.
 2. Start Duo on both phones.
 3. Touch HOST on the left phone. The screen shows the IP address.
 4. Touch JOIN on the right phone.
 5. Both phones show the canvas.
-6. Drag the ball with your finger.
+6. Turn the gap dial until the picture agrees across the join.
+7. Drag the ball with your finger.
 
 The ball obeys the walls of the full canvas. The join between the two phones is
 not a wall.
@@ -83,33 +120,70 @@ onto the other phone.
 
 Touch `back`, or use the back gesture, to go to the menu.
 
-## Set the calibration
+## Choose the mode
+
+Touch CANVAS, VIDEO, or WEB on the menu before you touch HOST or JOIN. The host
+sends the choice to the client.
+
+**Canvas.** A grid of 50 dp squares and one ball. The grid shows the join
+clearly. Use it to set the gap.
+
+**Video.** Both phones play the same clip. The host owns the clock. It sends its
+position four times each second. The client takes the play state from the host,
+and moves to the host position if it drifts more than 200 ms.
+
+Only the host makes sound. Two phones in one room would echo.
+
+**Web.** The host types an address. Both phones load that address. The host owns
+the vertical scroll position. Either phone can scroll.
+
+The web mode is the experimental one. Both phones must lay the page out at the
+same width, and some pages refuse. A plain page works. A complex one often does
+not. If the two halves disagree, try a different page.
+
+## Calibrate the two phones
+
+Do this on the menu before you touch HOST or JOIN. The app reads both values
+when the connection starts.
+
+### Size
 
 The two phones can report different values for their own pixel density. A shape
-is then not the same physical size on both phones. The grid squares do not
-agree.
-
-Use the calibration control on the menu to correct this difference.
+is then not the same physical size on both phones. The grid squares do not agree.
 
 - Touch `+` to make the content on that phone larger.
 - Touch `−` to make the content on that phone smaller.
 - Touch `100%` to go back to the default value.
 
-Do this before you touch HOST or JOIN. The app reads the calibration value when
-the connection starts.
-
 These values come from our two phones:
 
-| Phone | Calibration |
+| Phone | Size |
 |---|---|
 | Google Pixel 9 Pro XL | 1.00x |
-| Xiaomi Mi 11X | 0.89x |
+| Xiaomi Mi 11X | 0.90x |
 
 The Pixel reports 160.8 dp for each inch of its panel. This value is almost
 correct. The Mi 11X reports 143.5 dp for each inch. MIUI sets the density of the
-Mi 11X to 440 dpi. That value makes the content too large.
+Mi 11X to 440 dpi. That value makes the content 11 percent too large.
+
+### Panel gap
+
+The two screens do not touch. A real gap sits between them. The bezels hide that
+band of the canvas. Correct the gap, or the picture jumps at the join.
+
+1. Put the two phones side by side.
+2. Measure the distance between the two lit screens with a ruler.
+3. Touch `−` or `+` until the number agrees with your measurement.
+
+You can change the gap while the app runs. A small dial at the top of the canvas
+does the same job. The host sends each change to the client at once.
+
+The centre circle helps you. The app draws it half on one screen and half on the
+other. Turn the dial until the two halves make one complete circle.
 
 ## How it works
+
+### One coordinate space
 
 Both phones use one coordinate space. The unit of this space is the dp.
 
@@ -117,38 +191,52 @@ A dp is a density-independent pixel. Android supplies about 160 dp for each
 inch. A shape of 100 dp is thus almost the same physical size on both phones.
 This is the key idea of the project.
 
-The host phone does these tasks:
+### The gap between the panels
 
-- It keeps the state of the ball.
-- It calculates the movement of the ball.
-- It sends the position of the ball to the other phone at the frame rate.
+The left phone holds the logical range `[0, aw)`. The gap holds `[aw, aw + gap)`.
+The right phone holds `[aw + gap, aw + gap + bw)`.
 
-The client phone does these tasks:
+No phone draws the middle range. The bezels hide it. The ball crosses it without
+help. Only the two outer edges are walls.
 
-- It sends each touch to the host phone.
-- It draws the ball at the position from the host phone.
+### The video
 
-The host sends one message to the client for each frame. The delay on a local
-network is a few milliseconds. The user does not see this delay.
+The video always fills the full logical width. That choice makes the picture
+continuous across the join. Each phone then shows its own window onto the video.
 
-The two phones find each other in this sequence:
+The app scales the video on each phone by the same amount, and moves it by the
+width of that phone's slice. The test proves that the hidden band equals the
+physical gap.
 
-1. The client sends a UDP probe to the broadcast address.
-2. The host answers the probe.
-3. The client opens a TCP connection to the host.
-4. The client sends its screen size to the host.
-5. The host sends the full layout to the client.
+### The web page
+
+Both phones must lay the page out at the same width. The app gives each phone a
+viewport as wide as the whole canvas. Each phone then zooms by its own size
+value. One CSS pixel is thus the same physical size on both screens.
+
+Each phone then scrolls sideways to its own slice. Only the vertical position
+needs to travel between the phones, and the app sends it as a fraction so that
+the two screens need not agree on pixel counts.
+
+### The host is the clock
+
+The host is authoritative. It owns the ball, runs the physics, holds the
+playback clock, and picks the mode. The client sends its raw touches and draws
+whatever the host says.
+
+One message goes from the host to the client for each frame. The delay on a
+local network is a few milliseconds. The user does not see this delay.
 
 ### The files
 
 ```
 app/src/main/java/com/azhar/duo/
-  World.kt         The canvas and the movement of the ball. No Android imports.
+  World.kt         The canvas, the gap, the video crop maths, and the ball.
   Link.kt          The discovery and the network connection.
-  Session.kt       The connection between the network and the canvas.
-  MainActivity.kt  The user interface and the touch input.
+  Session.kt       The connection between the network, the video, and the canvas.
+  MainActivity.kt  The user interface, the video surface, and the web surface.
 app/src/test/java/com/azhar/duo/
-  WorldTest.kt     Eight tests for the join, the walls, and the release.
+  WorldTest.kt     Nineteen tests for the geometry and the physics.
 ```
 
 `World.kt` has no Android imports. You can thus test the geometry and the
@@ -156,12 +244,17 @@ movement on a computer.
 
 ### The messages
 
+The two phones trade JSON messages on one TCP socket.
+
 | Direction | Message |
 |---|---|
-| client to host | `{"t":"hello","w":<width>,"h":<height>}` |
-| host to client | `{"t":"layout","aw":..,"ah":..,"bw":..,"bh":..}` |
+| client to host | `{"t":"hello","w":<width>,"h":<height>,"v":<has video>}` |
+| host to client | `{"t":"layout","aw":..,"ah":..,"bw":..,"bh":..,"m":"<mode>","url":"..","gap":..}` |
 | host to client | `{"t":"ball","x":..,"y":..,"vx":..,"vy":..}` for each frame |
-| client to host | `{"t":"touch","x":..,"y":..,"d":true or false}` |
+| host to client | `{"t":"vid","p":<position ms>,"r":<playing>}` |
+| client to host | `{"t":"touch","x":..,"y":..,"d":<down>}` |
+| either to either | `{"t":"gap","mm":<gap>}` |
+| either to either | `{"t":"scroll","f":<fraction>}` |
 
 Both phones calculate the same layout from the same four numbers. The layout
 message is thus only a sync point.
@@ -176,50 +269,52 @@ has almost the same physical size on both phones. We did not need special
 calibration code for the usual case.
 
 Then we wrote `World.kt`. This file holds the canvas and the ball. We kept
-Android out of this file. The file thus runs on a computer. We wrote eight unit
-tests for the file before we touched the user interface.
+Android out of this file. The file thus runs on a computer. We wrote the unit
+tests before we touched the user interface.
 
 The tests cover these conditions:
 
 - The ball continues across the join. It does not stop there.
 - The ball stops at the outer walls of the full canvas.
 - A fast drag does not move the ball at a speed that is too high.
+- The band behind the bezels equals the gap.
 
 Then we wrote the network code. We used one TCP connection with JSON messages.
 We did not use WebRTC. A local network needs no more than a socket.
 
-Then we wrote the user interface.
+Then we wrote the user interface, the video renderer, and the web renderer.
 
 ### Problems we found
 
-Problem: The first version started one coroutine for each message. Coroutines
-do not keep their sequence. The ball could jump back to an old position.
+**Problem.** The first version started one coroutine for each message.
+Coroutines do not keep their sequence. The ball could jump back to an old
+position.
 
-Correction: One writer coroutine now reads from a queue.
+**Correction.** One writer coroutine now reads from a queue.
 
-Problem: A closed socket sends a "disconnect" event from its own thread. This
-event can arrive after the app goes back to the menu.
+**Problem.** A closed socket sends a "disconnect" event from its own thread.
+This event can arrive after the app goes back to the menu.
 
-Correction: The app now ignores events from an old connection.
+**Correction.** The app now ignores events from an old connection.
 
-Problem: The connection of the Mi 11X failed at first. The phone was behind a
-USB hub. The ADB tool does not always find a device behind a hub.
+**Problem.** The ADB tool did not find the Mi 11X. The phone was behind a USB
+hub. The phone was correct, and the cable was correct.
 
-Correction: Connect the phone directly to the computer.
+**Correction.** Connect the phone directly to the computer.
 
-Problem: The reported density of the Mi 11X is not correct for its panel. The
-content was 11 percent too large on that phone.
+**Problem.** The reported density of the Mi 11X is not correct for its panel.
+The content was 11 percent too large on that phone.
 
-Correction: We added the calibration control to the menu.
+**Correction.** We added the size control to the menu.
 
-## Ideas for more work
+**Problem.** The video drew at the wrong size. It filled the whole screen
+instead of one half of the picture. The app calculated the crop, but never
+applied it.
 
-- Show a video on both phones. Each phone shows one half of the picture. The
-  geometry code does not change.
-- Let the app find the correct calibration automatically. One method: show a
-  shape of a known physical size and let the user measure it.
-- Connect more than two phones. `World.kt` already divides the canvas into any
-  number of parts. `Link.kt` is the part that assumes two phones.
+**Correction.** A surface reports its size only after the layout pass. Nothing
+else on that screen caused a redraw, so the crop maths never received a size.
+The app now takes the size from a layout callback. The web surface had the same
+fault, and the same correction.
 
 ## Limits
 
@@ -228,6 +323,19 @@ Correction: We added the calibration control to the menu.
   screen shows the IP address of the host.
 - The app does not change the system. It cannot show other apps across the two
   screens.
+- The two phones must have the same clip for the video mode, and the same page
+  must work on both for the web mode.
+- The two phones must sit at the same height. The app does not correct a
+  vertical offset.
+
+## Ideas for more work
+
+- Let the app find the correct size value by itself. One method: show a shape of
+  a known physical size and let the user measure it.
+- Correct the vertical alignment. The two phones can sit at different heights.
+- Connect more than two phones. `World.kt` already divides the canvas into any
+  number of parts. `Link.kt` is the part that assumes two phones.
+- Show a different source on each phone, and move an object between them.
 
 ## License
 
