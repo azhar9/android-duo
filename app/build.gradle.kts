@@ -1,5 +1,33 @@
 import java.util.Properties
 
+/**
+ * The version comes from git. A tag `v1.2.3` becomes versionName 1.2.3, and the
+ * commit count becomes the versionCode.
+ *
+ * Google Play needs versionCode to go up on every upload, for ever. A number
+ * that is never reused cannot be got wrong by forgetting to bump it, which is
+ * the usual way a release fails at the last moment.
+ *
+ * Outside a git checkout — a source zip, say — this falls back to a version
+ * that is obviously not a release.
+ */
+fun gitOutput(vararg args: String): String? = try {
+    val process = ProcessBuilder(listOf("git") + args)
+        .directory(rootDir)
+        .redirectErrorStream(true)
+        .start()
+    val text = process.inputStream.bufferedReader().readText().trim()
+    if (process.waitFor() == 0 && text.isNotEmpty()) text else null
+} catch (_: Exception) {
+    null
+}
+
+val gitTag = gitOutput("describe", "--tags", "--abbrev=0")
+val gitCommits = gitOutput("rev-list", "--count", "HEAD")?.toIntOrNull() ?: 0
+
+val appVersionName = gitTag?.removePrefix("v")?.takeIf { it.isNotEmpty() } ?: "0.0.0-dev"
+val appVersionCode = 1 + gitCommits
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -30,8 +58,8 @@ android {
         // below Android 13 has never been run — test before trusting it.
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         // versionName stays "1.0" for every development build, so it cannot
         // tell a phone running yesterday's code from one running today's. This

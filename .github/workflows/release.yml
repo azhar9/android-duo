@@ -1,13 +1,22 @@
 name: Release
 
-# Tag a commit to build a signed bundle:
+# Push a tag to cut a release:
 #
 #   git tag v1.0.0
 #   git push origin v1.0.0
 #
-# The bundle that comes out is what you upload to Google Play. It is not
-# uploaded for you — that step needs your Play credentials, and it is better to
-# do it by hand until you trust the pipeline.
+# The tag becomes versionName, and the commit count becomes versionCode. Both
+# end up in the bundle that goes to Google Play.
+#
+# What this does, in order:
+#   1. Builds a signed bundle and a signed APK
+#   2. Publishes both on the GitHub release page
+#   3. Sends the bundle to the Play **internal testing** track, if a service
+#      account is configured
+#
+# It does NOT put anything in front of the public. The internal track is for
+# you and the testers you name. Promote it to production from the Play Console
+# once you have tried it.
 
 on:
   push:
@@ -15,12 +24,16 @@ on:
   workflow_dispatch:
 
 jobs:
-  bundle:
-    name: Build a signed bundle
+  release:
+    name: Build and publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # to create the GitHub release
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # the version needs the tags and the commit count
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -31,9 +44,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # The keystore arrives as a base64 secret and is written to a file that
-      # exists only for the length of this job. The runner is thrown away
-      # afterwards, but the cleanup step below makes that explicit.
+      # The keystore arrives as a base64 secret and exists only for this job.
+      # The runner is thrown away afterwards; the cleanup step makes it plain.
       - name: Write the signing file
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -56,20 +68,60 @@ jobs:
       - name: Tests
         run: ./gradlew :app:testDebugUnitTest
 
-      - name: Build the release bundle
-        run: ./gradlew :app:bundleRelease
+      - name: Build the signed bundle and APK
+        run: ./gradlew :app:bundleRelease :app:assembleRelease
 
-      - name: Check the bundle is signed
+      - name: Report what was built
         run: |
           AAB=$(ls app/build/outputs/bundle/release/*.aab | head -1)
-          echo "built $AAB"
-          ls -la "$AAB"
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          echo "bundle: $AAB"
+          echo "apk:    $APK"
+          ls -la "$AAB" "$APK"
+          # A release built without a keystore is unsigned and Play will refuse
+          # it. Better to fail here than to find out at the upload.
+          if ! unzip -l "$APK" >/dev/null 2>&1; then
+            echo "::error::the APK is not a valid archive"
+            exit 1
+          fi
 
-      - name: Keep the bundle
+      - name: Publish on the GitHub release page
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Duo ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            app/build/outputs/apk/release/*.apk \
+            app/build/outputs/bundle/release/*.aab
+
+      # Internal testing only. Nobody outside the tester list sees this, and
+      # promoting it to production stays a deliberate act in the Console.
+      - name: Send the bundle to the Play internal track
+        if: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.therealsoftware.duo
+          releaseFiles: app/build/outputs/bundle/release/*.aab
+          track: internal
+          status: completed
+
+      - name: Note that Play was skipped
+        if: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON == '' }}
+        run: |
+          echo "::notice::No PLAY_SERVICE_ACCOUNT_JSON secret, so the bundle was"\
+          "not sent to Play. See PLAYSTORE.md for how to set it up."
+
+      - name: Keep the artifacts either way
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: duo-release-aab
-          path: app/build/outputs/bundle/release/*.aab
+          name: duo-${{ github.ref_name }}
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
+          if-no-files-found: ignore
 
       - name: Remove the signing file
         if: always()

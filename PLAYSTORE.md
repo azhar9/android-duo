@@ -35,7 +35,31 @@ with an upload key. If you lose the upload key, they can replace it. Do this
 **before** the first upload — you cannot move to it later without starting a new
 listing.
 
-## 3. Build a bundle
+## 3. Versions
+
+The version comes from git, not from a number someone remembers to bump.
+
+- A tag `v1.2.3` gives **versionName 1.2.3**
+- The commit count gives **versionCode**
+- Without a tag the version is `0.0.0-dev`
+
+Google Play needs versionCode to go up on every upload, for ever. A number that
+is never reused cannot be got wrong by forgetting to change it, which is the
+usual way a release fails at the last moment.
+
+To cut a release:
+
+```
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+That runs `.github/workflows/release.yml`, which builds a signed bundle and APK,
+publishes both on the GitHub release page, and sends the bundle to the Play
+**internal testing** track. Nobody outside your tester list sees it. Promoting it
+to production stays a deliberate act in the Console.
+
+## 4. Build a bundle by hand
 
 ```
 ./gradlew :app:bundleRelease
@@ -60,11 +84,18 @@ That runs `.github/workflows/release.yml`, which needs four repository secrets
 | `STORE_PASSWORD` | the store password you chose |
 | `KEY_ALIAS` | `duo` |
 | `KEY_PASSWORD` | the key password you chose |
+| `PLAY_SERVICE_ACCOUNT_JSON` | optional. Without it the bundle is not sent to Play — see below. |
 
-The workflow writes the keystore to the runner, builds, keeps the bundle as an
-artifact, and deletes the keystore afterwards. It does not upload to Play.
+The workflow writes the keystore to the runner, builds, publishes the release,
+and deletes the keystore afterwards.
 
-## 4. Host the privacy policy
+**To let it upload to Play**, make a service account in the Play Console
+(Setup → API access), give it access to this app, download its JSON key, and
+paste the whole file into a repository secret called
+`PLAY_SERVICE_ACCOUNT_JSON`. Without that secret the workflow says so and
+skips the upload; nothing else changes.
+
+## 5. Host the privacy policy
 
 Play requires a privacy policy **URL**, not a file in your repository. The
 policy is written and ready at [PRIVACY.md](PRIVACY.md).
@@ -78,7 +109,7 @@ https://azhar9.github.io/android-duo/PRIVACY.md
 
 Check that address opens in a browser before you paste it into the Console.
 
-## 5. The store listing
+## 6. The store listing
 
 | Field | Notes |
 |---|---|
@@ -90,7 +121,7 @@ Check that address opens in a browser before you paste it into the Console.
 | Phone screenshots | At least 2, at least 320 px on the short side. **You have to take these.** Take them with the two phones actually working — that is the whole point of the app. |
 | Category | Tools, or Video Players & Editors. |
 
-## 6. The forms in the Console
+## 7. The forms in the Console
 
 **Data safety.** Duo collects nothing, shares nothing, and stores nothing on a
 server. Answer every question "no" and say the data is not transmitted off the
@@ -112,7 +143,7 @@ user-provided content.
 ordinary, and neither needs a declaration form. It asks for no storage
 permission, because the photo picker hands over one file at a time.
 
-## 7. Closed testing first
+## 8. Closed testing first
 
 Play requires new personal accounts to run a closed test with a number of
 testers before going to production. Start one, put the two phones on it, and use
@@ -122,7 +153,7 @@ long video, a short one, a page that works and a page that does not.
 The one thing I could not test from here: **the web mode's zoom.** See the
 README. Test that specifically.
 
-## 8. Release
+## 9. Release
 
 Promote the closed test to production once it behaves. Google reviews the first
 submission, usually within a few days.

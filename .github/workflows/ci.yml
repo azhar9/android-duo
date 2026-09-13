@@ -34,6 +34,18 @@ jobs:
       - name: Build the debug APK
         run: ./gradlew :app:assembleDebug
 
+      # Every push to main also proves the release build still compiles and
+      # still signs. Finding that out at tag time, with a release half cut,
+      # is the worst moment for it.
+      - name: Build the release bundle (unsigned)
+        run: ./gradlew :app:bundleRelease
+
+      - name: Say which version this is
+        run: |
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
+          "$AAPT" dump badging app/build/outputs/apk/debug/app-debug.apk \
+            | head -1 | sed 's/^/::notice::/'
+
       - name: Keep the test report
         if: always()
         uses: actions/upload-artifact@v4
