@@ -588,6 +588,12 @@ private fun LiveScreen(session: Session) {
             }
 
             Canvas(Modifier.fillMaxSize().then(gesture)) {
+                // The ball lives in plain fields, not Compose state, so nothing
+                // tells the canvas to draw again when it moves. Reading the frame
+                // counter here says "this drawing depends on the frame", and that
+                // is what keeps it live. Without it the ball freezes on screen
+                // while the touches still work.
+                frame
                 val v = viewportOf(world, size.width, size.height)
                 val u = v.u
                 clipRect {

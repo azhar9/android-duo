@@ -21,6 +21,20 @@ import java.net.Socket
 /** The path the other phone asks for. */
 const val MEDIA_PATH = "/video"
 
+/**
+ * The address the other phone streams from.
+ *
+ * [token] names the clip, and it has to change when the clip changes. The
+ * receiving phone caches what it downloads under this address, so a fixed
+ * address means it replays the first clip it ever fetched and never the one
+ * being served now.
+ */
+fun mediaUrl(host: String, port: Int, token: String): String =
+    "http://$host:$port$MEDIA_PATH?c=$token"
+
+/** The request line's path, with any query taken off. */
+fun requestPath(target: String): String = target.substringBefore('?')
+
 private class Request(val method: String, val path: String, val headers: Map<String, String>)
 
 /**
@@ -208,7 +222,7 @@ class MediaServer(context: Context, private val scope: CoroutineScope, private v
             val i = h.indexOf(':')
             if (i > 0) headers[h.substring(0, i).trim().lowercase()] = h.substring(i + 1).trim()
         }
-        return Request(parts[0].trim().uppercase(), parts[1].trim(), headers)
+        return Request(parts[0].trim().uppercase(), requestPath(parts[1].trim()), headers)
     }
 
     private fun readLine(input: InputStream): String? {

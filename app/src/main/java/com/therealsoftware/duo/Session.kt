@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
@@ -40,6 +41,7 @@ enum class Mode { Canvas, Video, Web, Picture }
  * exactly one of these. The limit is generous because the point is to hold a
  * whole film: once it is here, playback no longer touches the network.
  */
+@androidx.annotation.OptIn(UnstableApi::class)
 private object MediaCache {
     private const val LIMIT = 1024L * 1024 * 1024
 
@@ -55,6 +57,7 @@ private object MediaCache {
 }
 
 /** Builds data sources that read over the network and keep what they read. */
+@androidx.annotation.OptIn(UnstableApi::class)
 private fun cachingSource(context: Context): CacheDataSource.Factory {
     val upstream = DefaultHttpDataSource.Factory()
         .setConnectTimeoutMs(8000)
@@ -100,6 +103,10 @@ const val DEFAULT_URL = "https://www.google.com"
  * One round trip on a hotspot is a few ms, so the client's ball tracks its own
  * finger closely enough that nobody notices.
  */
+// The player and the cache are media3's, and media3 marks those parts unstable.
+// The version is pinned in build.gradle.kts, so the note here says the use is
+// deliberate rather than accidental.
+@androidx.annotation.OptIn(UnstableApi::class)
 class Session(private val scope: CoroutineScope, context: Context) {
 
     private val appContext = context.applicationContext
@@ -193,6 +200,11 @@ class Session(private val scope: CoroutineScope, context: Context) {
     /** The address both phones load. The host owns it. */
     var liveUrl by mutableStateOf(""); private set
 
+    /** Names the clip this phone holds, so the other phone caches it apart. */
+    private fun myClipToken(): String = myClip?.toString()?.hashCode()?.toString() ?: ""
+
+    /** Names the clip the other phone is serving, learned from its messages. */
+    private var peerClipKey = ""
 
     private var myW = 0f
     private var myH = 0f
@@ -274,7 +286,9 @@ class Session(private val scope: CoroutineScope, context: Context) {
             source = Source.Me
             clipName = displayName
             if (phase == Phase.Live) {
-                link.send(JSONObject().put("t", "source").put("n", displayName))
+                link.send(
+                    JSONObject().put("t", "source").put("n", displayName).put("k", myClipToken())
+                )
                 if (liveMode == Mode.Video) restartPlayer()
             }
         }
@@ -522,6 +536,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
                         .put("ax", axis.name)
                         .put("src", if (source == Source.Me) "host" else if (source == Source.Peer) "client" else "")
                         .put("n", clipName)
+                        .put("k", if (source == Source.Me) myClipToken() else peerClipKey)
                 )
             }
 
@@ -540,6 +555,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
                     "host" -> {
                         source = Source.Peer
                         clipName = j.optString("n")
+                        peerClipKey = j.optString("k")
                     }
                     else -> {
                         source = Source.None
@@ -567,6 +583,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
                 } else {
                     source = Source.Peer
                     clipName = n
+                    peerClipKey = j.optString("k")
                     if (phase == Phase.Live && liveMode == Mode.Video) restartPlayer()
                 }
             }
@@ -690,7 +707,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
         val item = when (source) {
             Source.Me -> myClip?.let { MediaItem.fromUri(it) }
             Source.Peer -> link.peerIp?.let {
-                MediaItem.fromUri("http://$it:${ports.media}$MEDIA_PATH")
+                MediaItem.fromUri(mediaUrl(it, ports.media, peerClipKey))
             }
             Source.None -> null
         } ?: return
