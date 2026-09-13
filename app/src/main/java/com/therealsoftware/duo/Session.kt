@@ -10,8 +10,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +29,40 @@ enum class Phase { Menu, Waiting, Live, Dead }
 
 /** What the two phones put on the canvas. */
 enum class Mode { Canvas, Video, Web, Picture }
+
+/**
+ * One disk cache for streamed media, shared by the whole app.
+ *
+ * SimpleCache refuses to open the same directory twice, so there has to be
+ * exactly one of these. The limit is generous because the point is to hold a
+ * whole film: once it is here, playback no longer touches the network.
+ */
+private object MediaCache {
+    private const val LIMIT = 1024L * 1024 * 1024
+
+    @Volatile
+    private var instance: SimpleCache? = null
+
+    fun of(context: Context): SimpleCache = instance ?: synchronized(this) {
+        instance ?: SimpleCache(
+            java.io.File(context.cacheDir, "streamed"),
+            LeastRecentlyUsedCacheEvictor(LIMIT),
+        ).also { instance = it }
+    }
+}
+
+/** Builds data sources that read over the network and keep what they read. */
+private fun cachingSource(context: Context): CacheDataSource.Factory {
+    val upstream = DefaultHttpDataSource.Factory()
+        .setConnectTimeoutMs(8000)
+        .setReadTimeoutMs(8000)
+        .setAllowCrossProtocolRedirects(true)
+    return CacheDataSource.Factory()
+        .setCache(MediaCache.of(context))
+        .setUpstreamDataSourceFactory(upstream)
+        // A cache that cannot be written is not a reason to stop playing.
+        .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+}
 
 /** Which phone holds the clip. The geometry role and the media role are separate. */
 enum class Source { None, Me, Peer }
@@ -599,7 +638,15 @@ class Session(private val scope: CoroutineScope, context: Context) {
             .setBufferDurationsMs(8000, 40000, 2000, 5000)
             .build()
 
-        player = ExoPlayer.Builder(appContext).setLoadControl(buffer).build().apply {
+        val builder = ExoPlayer.Builder(appContext).setLoadControl(buffer)
+        if (source == Source.Peer) {
+            // Stream and keep. Playback starts from whatever has arrived, and
+            // the player holds on to it, so a rewind or a replay of a part
+            // already seen costs no network at all.
+            builder.setMediaSourceFactory(DefaultMediaSourceFactory(cachingSource(appContext)))
+        }
+
+        player = builder.build().apply {
             repeatMode = Player.REPEAT_MODE_ALL
             setMediaItem(item)
             // Only the phone that holds the clip makes sound. Two phones in one
