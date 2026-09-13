@@ -29,7 +29,7 @@ private const val SYNC_TOLERANCE_MS = 200L
 /** How often the host tells the client where it is. */
 private const val SYNC_INTERVAL_MS = 400L
 
-const val DEFAULT_URL = "https://en.wikipedia.org/wiki/Foldable_smartphone"
+const val DEFAULT_URL = "https://www.google.com"
 
 /**
  * Wires the transport to the shared canvas.

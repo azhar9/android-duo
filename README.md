@@ -163,10 +163,14 @@ The picture travels as a JPEG for each frame, about 10 each second. On a local
 network that is roughly 1 MB for each second. Text is slightly soft because it
 is a picture of text.
 
-**Known limitation.** The page may not fill the whole canvas width. Android's
-WebView chooses its own zoom in ways that are hard to predict, so the right-hand
-phone can show empty space where the page should continue. The two halves always
-agree with each other, but the page may not reach the far edge.
+**Known limitation — web mode is the experimental one.** Android's WebView
+chooses its own zoom, and it does not always honour the width we ask for. The
+page can render wider than the two screens together, so the far right is cut
+off. The two halves still agree with each other, because both are cut from one
+render, but the page may not fit.
+
+Set the size on both phones before you start. Then open something wide and
+visual to see whether the page lands where you expect.
 
 
 ## How the phones sit
