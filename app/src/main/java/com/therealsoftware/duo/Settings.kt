@@ -31,6 +31,11 @@ class Settings(context: Context) {
         get() = store.getFloat("calib", 1f)
         set(v) = store.edit().putFloat("calib", v).apply()
 
+    /** True when the host takes the left half. The host chooses it. */
+    var hostFirst: Boolean
+        get() = store.getBoolean("hostFirst", true)
+        set(v) = store.edit().putBoolean("hostFirst", v).apply()
+
     var axis: Axis
         get() = if (store.getString("axis", null) == Axis.Vertical.name) {
             Axis.Vertical

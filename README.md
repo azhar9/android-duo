@@ -15,7 +15,7 @@ The app has three modes. The host picks the mode. Both phones then follow it.
 
 | Mode | What the two phones show |
 |---|---|
-| Grid | A grid and a ball. Drag the ball from one phone to the other. This is the setup screen: use it to set the gap and check the alignment. |
+| Set up | A ruler in millimetres, lines of text that run across the join, and a ball to drag from one phone to the other. Use this one first, to make the two screens agree. |
 | Video | One video file. Either phone can serve it; the other streams it. |
 | Web | One web page. Both phones run a browser and each shows its own half. |
 | File | A photo or a PDF. The whole page is shown across both screens. |
@@ -197,7 +197,8 @@ Touch `back`, or use the back gesture, to go to the menu.
 
 ## Choose the mode
 
-Touch **Grid**, **Video**, or **Web** on the setup screen before you start. The
+Touch **Set up**, **Video**, **Web**, or **File** on the setup screen before you
+start. The
 host sends the choice to the client.
 
 **Grid.** A grid of 50 dp squares and one ball. This is the setup screen: the
@@ -263,6 +264,32 @@ The app is not locked to portrait. Turn either phone and it follows.
 
 Do this on the menu before you touch HOST or JOIN. The app reads both values
 when the connection starts.
+
+### Set up
+
+Start a **Set up** session before anything else. It draws three things across
+the two screens:
+
+- **A ruler in millimetres**, so you can hold a real ruler against it and see
+  whether this phone draws a millimetre as a millimetre.
+- **Lines of text that run across the join.** A grid tells you that something is
+  wrong. A line of letters tells you which way and by how much, because a letter
+  is a shape you know by heart. Each line starts in the same place, so the join
+  cuts every one at a different letter.
+- **A ball**, which crosses the gap and can be dragged from either phone.
+
+Both settings are on the bar at the bottom while the session runs, so you can
+change them and watch what happens:
+
+- **The gap**, in millimetres, on the host. It is a bar as well as a number,
+  because the band between the screens is the one part no phone can draw, so
+  the setting has nothing to move on the screen that changes it. The bar does
+  move.
+- **The size**, as a percentage, on both phones. This one is per phone, and it
+  is the control to reach for when a letter is bigger on one screen than the
+  other.
+
+Both are kept, so this is a job you do once.
 
 ### Size
 

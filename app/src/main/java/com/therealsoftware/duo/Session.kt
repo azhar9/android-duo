@@ -149,6 +149,14 @@ class Session(private val scope: CoroutineScope, context: Context) {
     /** Side by side, or one above the other. The host owns this. */
     var axis by mutableStateOf(settings.axis); private set
 
+    /**
+     * True when the host holds the first slice — the left half, or the top one.
+     * The host owns this, because it owns the layout. Which phone is on the left
+     * is a question about where the phones were put down, and has nothing to do
+     * with which one keeps the clock.
+     */
+    var hostFirst by mutableStateOf(settings.hostFirst); private set
+
     // --- menu choices, host only. liveMode is what actually runs. ---
     var mode by mutableStateOf(Mode.Video)
     var url by mutableStateOf(DEFAULT_URL)
@@ -220,6 +228,10 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
     private var myW = 0f
     private var myH = 0f
+
+    /** The other phone's logical size, as it last reported it. */
+    private var peerW = 0f
+    private var peerH = 0f
 
     /** True when this phone is being held tall rather than wide. */
     private val isPortrait: Boolean get() = myH >= myW
@@ -402,6 +414,50 @@ class Session(private val scope: CoroutineScope, context: Context) {
     fun changeCalib(v: Float) {
         calib = v.coerceIn(0.70f, 1.40f)
         settings.calib = calib
+        if (phase != Phase.Live) return
+        relayout()
+        world.place(world.totalW / 2f, world.h / 2f)
+        if (isHost) {
+            sendLayout()
+        } else {
+            // The host owns the layout, so it works out the new shape and
+            // sends it back.
+            link.send(
+                JSONObject().put("t", "size")
+                    .put("w", (myW / calib).toDouble()).put("h", (myH / calib).toDouble())
+            )
+        }
+    }
+
+    /** Which phone is on the left. The host chooses; the client follows. */
+    fun chooseFirst(hostTakesFirst: Boolean) {
+        hostFirst = hostTakesFirst
+        settings.hostFirst = hostTakesFirst
+        relayout()
+        world.place(world.totalW / 2f, world.h / 2f)
+        if (isHost && phase == Phase.Live) {
+            link.send(JSONObject().put("t", "side").put("f", if (hostFirst) 1 else 0))
+        }
+    }
+
+    /**
+     * Cut the canvas again after a size or a side changes.
+     *
+     * The size of each phone is part of the shape of the canvas, so changing it
+     * mid-session means the layout has to be worked out again and sent again.
+     * The player, the picture and the sockets are left alone: only the geometry
+     * moves.
+     */
+    private fun relayout() {
+        if (myW <= 0f || peerW <= 0f) return
+        val mineW = myW / calib
+        val mineH = myH / calib
+        if (isHost) {
+            world.layout(mineW, mineH, peerW, peerH, hostFirst, axis)
+        } else {
+            world.layout(peerW, peerH, mineW, mineH, !hostFirst, axis)
+        }
+        world.setGapMm(gapMm)
     }
 
     /** Side by side, or stacked. The host tells the client. */
@@ -599,22 +655,26 @@ class Session(private val scope: CoroutineScope, context: Context) {
                         else -> Mode.Canvas
                     }
                 }
-                begin(aw, ah, bw, bh, first = true, use, gapMm, url, source, clipName, axis)
-                link.send(
-                    JSONObject().put("t", "layout")
-                        .put("aw", aw.toDouble()).put("ah", ah.toDouble())
-                        .put("bw", bw.toDouble()).put("bh", bh.toDouble())
-                        .put("m", use.name.lowercase())
-                        .put("url", url)
-                        .put("gap", gapMm.toDouble())
-                        .put("ax", axis.name)
-                        .put("src", if (source == Source.Me) "host" else if (source == Source.Peer) "client" else "")
-                        .put("n", clipName)
-                        .put("k", if (source == Source.Me) myClipToken() else peerClipKey)
-                )
+                peerW = bw
+                peerH = bh
+                begin(aw, ah, bw, bh, first = hostFirst, use, gapMm, url, source, clipName, axis)
+                sendLayout()
             }
 
             "layout" -> if (!isHost) {
+                // Mid-session this is a size or a side change, not a new
+                // session: move the geometry and leave everything else alone.
+                if (phase == Phase.Live) {
+                    peerW = j.optDouble("aw").toFloat()
+                    peerH = j.optDouble("ah").toFloat()
+                    hostFirst = j.optInt("f", 1) == 1
+                    axis = if (j.optString("ax") == "Vertical") Axis.Vertical else Axis.Horizontal
+                    gapMm = j.optDouble("gap", gapMm.toDouble()).toFloat()
+                    myW = j.optDouble("bw", myW.toDouble()).toFloat() * calib
+                    myH = j.optDouble("bh", myH.toDouble()).toFloat() * calib
+                    relayout()
+                    return@onMsg
+                }
                 val m = when (j.optString("m")) {
                     "video" -> Mode.Video
                     "web" -> Mode.Web
@@ -636,10 +696,16 @@ class Session(private val scope: CoroutineScope, context: Context) {
                         clipName = ""
                     }
                 }
+                // Which half this phone takes is the host's to say. It used to
+                // be nailed to "the host is the left one", which forced the two
+                // phones into a fixed order on the desk.
+                hostFirst = j.optInt("f", 1) == 1
+                peerW = j.optDouble("aw").toFloat()
+                peerH = j.optDouble("ah").toFloat()
                 begin(
                     j.optDouble("aw").toFloat(), j.optDouble("ah").toFloat(),
                     j.optDouble("bw").toFloat(), j.optDouble("bh").toFloat(),
-                    first = false, use = if (m == Mode.Video && source == Source.None) Mode.Canvas else m,
+                    first = !hostFirst, use = if (m == Mode.Video && source == Source.None) Mode.Canvas else m,
                     gap = j.optDouble("gap", 3.0).toFloat(),
                     url = j.optString("url"),
                     src = source, name = clipName,
@@ -660,6 +726,20 @@ class Session(private val scope: CoroutineScope, context: Context) {
                     peerClipKey = j.optString("k")
                     if (phase == Phase.Live && liveMode == Mode.Video) restartPlayer()
                 }
+            }
+
+            // The client changed its size. Work the canvas out again.
+            "size" -> if (isHost && phase == Phase.Live) {
+                peerW = j.optDouble("w").toFloat()
+                peerH = j.optDouble("h").toFloat()
+                relayout()
+                sendLayout()
+            }
+
+            "side" -> if (!isHost && phase == Phase.Live) {
+                hostFirst = j.optInt("f", 1) == 1
+                relayout()
+                world.place(world.totalW / 2f, world.h / 2f)
             }
 
             "scroll" -> if (phase == Phase.Live) {
@@ -753,6 +833,26 @@ class Session(private val scope: CoroutineScope, context: Context) {
         note = why
         phase = Phase.Dead
         link.send(JSONObject().put("t", "refuse").put("why", why))
+    }
+
+    /** Tell the client the shape of the canvas. The host owns it. */
+    private fun sendLayout() {
+        if (!isHost) return
+        val mineW = myW / calib
+        val mineH = myH / calib
+        link.send(
+            JSONObject().put("t", "layout")
+                .put("aw", mineW.toDouble()).put("ah", mineH.toDouble())
+                .put("bw", peerW.toDouble()).put("bh", peerH.toDouble())
+                .put("f", if (hostFirst) 1 else 0)
+                .put("m", liveMode.name.lowercase())
+                .put("url", liveUrl)
+                .put("gap", gapMm.toDouble())
+                .put("ax", axis.name)
+                .put("src", if (source == Source.Me) "host" else if (source == Source.Peer) "client" else "")
+                .put("n", clipName)
+                .put("k", if (source == Source.Me) myClipToken() else peerClipKey)
+        )
     }
 
     private fun begin(

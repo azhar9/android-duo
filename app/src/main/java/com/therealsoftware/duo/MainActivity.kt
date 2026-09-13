@@ -72,6 +72,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
@@ -80,7 +81,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -270,7 +275,8 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
             Spacer(Modifier.height(14.dp))
             val firstHalf = if (session.axis == Axis.Horizontal) "left half" else "top half"
             val secondHalf = if (session.axis == Axis.Horizontal) "right half" else "bottom half"
-            BigButton("Be the host  ·  $firstHalf", primary = true) {
+            val mine = if (session.hostFirst) firstHalf else secondHalf
+            BigButton("Be the host  ·  $mine", primary = true) {
                 session.startHost(wDp, hDp)
             }
 
@@ -297,7 +303,9 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
                 fontSize = 14.sp, color = Sub, lineHeight = 19.sp,
             )
             Spacer(Modifier.height(12.dp))
-            BigButton("Join a host  ·  $secondHalf", primary = false) {
+            // A joining phone does not choose its half: the host owns the
+            // layout, so it says which side each phone takes when it answers.
+            BigButton("Join a host", primary = false) {
                 session.startJoin(wDp, hDp, hostToFind)
             }
         }
@@ -308,7 +316,7 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
         Panel {
             SectionTitle("What to show")
             Segmented(
-                options = listOf("Grid", "Video", "Web", "File"),
+                options = listOf("Set up", "Video", "Web", "File"),
                 selected = when (session.mode) {
                     Mode.Canvas -> 0
                     Mode.Video -> 1
@@ -374,8 +382,8 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
                 }
                 Mode.Canvas -> {
                     Text(
-                        "A grid and a ball. Use it to line the two screens up, and to " +
-                            "check the gap.",
+                        "Line the two screens up. A ruler, lines of text that cross " +
+                            "the join, and a ball to throw across it.",
                         fontSize = 15.sp, color = Sub, lineHeight = 18.sp,
                     )
                 }
@@ -412,6 +420,16 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
                 options = listOf("Side by side", "Stacked"),
                 selected = if (session.axis == Axis.Horizontal) 0 else 1,
                 onSelect = { session.chooseAxis(if (it == 0) Axis.Horizontal else Axis.Vertical) },
+            )
+            Spacer(Modifier.height(12.dp))
+            Text("When this phone hosts, it takes", fontSize = 15.sp, color = Sub)
+            Spacer(Modifier.height(6.dp))
+            val half = if (session.axis == Axis.Horizontal) "Left half" else "Top half"
+            val other = if (session.axis == Axis.Horizontal) "Right half" else "Bottom half"
+            Segmented(
+                options = listOf(half, other),
+                selected = if (session.hostFirst) 0 else 1,
+                onSelect = { session.chooseFirst(it == 0) },
             )
             Spacer(Modifier.height(12.dp))
             StepperRow(
@@ -583,6 +601,7 @@ private fun LiveScreen(session: Session) {
     val world = session.world
 
     var frame by remember { mutableIntStateOf(0) }
+    val measurer = rememberTextMeasurer()
 
     LaunchedEffect(Unit) {
         var last = 0L
@@ -659,6 +678,7 @@ private fun LiveScreen(session: Session) {
                         // A picture and a page are the content itself. The grid
                         // would draw over them, so it belongs on the test screen only.
                         if (!session.videoMode && !session.webMode && !session.pictureMode) {
+                            alignMarks(world, u, measurer, session.gapMm)
                             var x = 0f
                             while (x <= world.totalW) {
                                 val bold = x % 200f < 1f
@@ -780,29 +800,63 @@ private fun LiveBar(session: Session, web: WebView?, modifier: Modifier = Modifi
             }
             Spacer(Modifier.height(8.dp))
         }
+        // The two settings that make the screens line up. They sit on their own
+        // row, and they are here rather than only on the setup screen because
+        // the only way to judge them is to watch the picture while you change
+        // them. The gap belongs to the pair, so the host owns it. The size
+        // belongs to this phone alone, so both phones get one.
         Row(
             Modifier
                 .shadow(10.dp, RoundedCornerShape(28.dp))
                 .clip(RoundedCornerShape(28.dp))
                 .background(Color(0xE6151515))
                 .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(28.dp))
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (session.isHost) {
                 BarButton("−") { session.setGap(session.gapMm - 0.5f) }
                 Text(
-                    "${mm(session.gapMm)} mm",
+                    "${mm(session.gapMm)}mm",
                     color = Color.White, fontSize = 14.sp, fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(horizontal = 8.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp),
                 )
                 BarButton("+") { session.setGap(session.gapMm + 0.5f) }
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier
+                        .width(1.dp)
+                        .height(22.dp)
+                        .background(Color(0x33FFFFFF)),
+                )
+                Spacer(Modifier.width(8.dp))
             }
-            // One name, because it does one job. It used to say "Swap", which
-            // reads as swapping between the phones and swaps nothing.
-            BarButton(if (session.myClip == null) "Choose video" else "Change video") {
-                pick.launch(pickerRequest())
+            BarButton("−") { session.changeCalib(session.calib - 0.02f) }
+            Text(
+                pct(session.calib),
+                color = Color.White, fontSize = 14.sp, fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(horizontal = 6.dp),
+            )
+            BarButton("+") { session.changeCalib(session.calib + 0.02f) }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        // Only in video mode. It picks the film the two phones play, and there
+        // is no film in a page or a picture, so offering it there asked a
+        // question with no answer.
+        if (session.videoMode) {
+            Row(
+                Modifier
+                    .shadow(10.dp, RoundedCornerShape(28.dp))
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(Color(0xE6151515))
+                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(28.dp))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BarButton(if (session.myClip == null) "Choose video" else "Change video") {
+                    pick.launch(pickerRequest())
+                }
             }
         }
 
@@ -1087,6 +1141,74 @@ private fun PageSurface(session: Session, onWeb: (WebView) -> Unit) {
         val mine = peer?.y ?: 0
         fromPeer = Scroll(0, mine)
         v.scrollTo(intoX, mine + intoY)
+    }
+}
+
+/**
+ * The marks that make the two screens line up: a millimetre scale, a bar for the
+ * gap, and lines of text that run across the join.
+ *
+ * The text is the point of it. A grid tells you that something is a little
+ * wrong. A line of letters tells you which way and by how much, because a
+ * letter is a shape you know by heart and a square is not. Each line starts at
+ * the same place, so the join cuts every one at a different letter.
+ *
+ * The bar under the scale is for the phone in your hand. The band between the
+ * screens is the part no phone draws, so the gap setting cannot show itself on
+ * the screen that changes it. The bar can.
+ */
+private fun DrawScope.alignMarks(
+    world: World,
+    u: Float,
+    measurer: TextMeasurer,
+    gapMm: Float,
+) {
+    val mm = DP_PER_MM
+    val faint = Color(0xFF6B7075)
+    val bright = Color(0xFFE8EAED)
+    val small = TextStyle(fontSize = 10.sp, color = faint)
+    val body = TextStyle(fontSize = 15.sp, color = bright)
+
+    // Held against a real ruler, this says whether the phone draws a
+    // millimetre as a millimetre.
+    var x = 0f
+    while (x <= world.totalW) {
+        val mark = (x / mm).toInt()
+        val tall = mark % 10 == 0
+        drawLine(
+            faint,
+            Offset(x * u, 0f), Offset(x * u, (if (tall) 14f else 7f) * u),
+            strokeWidth = if (tall) 1.5f else 1f,
+        )
+        if (tall && mark > 0) {
+            drawText(
+                measurer.measure(AnnotatedString("$mark"), small),
+                topLeft = Offset((x + 2f) * u, 15f * u),
+            )
+        }
+        x += 5f * mm
+    }
+
+    // The gap, as a bar that grows as the button is pressed.
+    val gap = gapMm.coerceIn(0f, 20f)
+    val barY = 46f
+    drawLine(faint, Offset(10f * u, barY * u), Offset((11f + gap * 10f) * u, barY * u), strokeWidth = 7f * u)
+    drawText(
+        measurer.measure(AnnotatedString("gap ${mm(gapMm)} mm"), small),
+        topLeft = Offset((15f + gap * 10f) * u, barY * u - 9f * u),
+    )
+
+    // Lines that run across the join, all starting at the same place.
+    listOf(
+        "The two screens are one page, and this line runs across it.",
+        "This line runs across the gap between the two screens as well.",
+        "If the letters line up across the join, the alignment is right.",
+        "The gap is set below this text. The size is set on each phone.",
+    ).forEachIndexed { i, line ->
+        drawText(
+            measurer.measure(AnnotatedString(line), body),
+            topLeft = Offset((world.totalW / 2f - 300f) * u, (world.h * 0.10f + i * 27f) * u),
+        )
     }
 }
 
