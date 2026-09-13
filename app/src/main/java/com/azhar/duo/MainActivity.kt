@@ -1,6 +1,11 @@
 package com.azhar.duo
 
+import android.annotation.SuppressLint
+import android.graphics.Matrix
 import android.os.Bundle
+import android.view.TextureView
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -20,13 +25,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -37,15 +47,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -58,6 +73,18 @@ private val BallColor = Color(0xFFFF4D6D)
 private val Seam = Color(0xFF00E5A0)
 private val Dim = Color(0xFF8892A6)
 private val Faint = Color(0xFF49546A)
+
+private fun mm(v: Float) = String.format(Locale.US, "%.1f", v)
+
+/**
+ * WebView keeps its scroll extents protected, and they are the only way to ask
+ * how wide the page actually laid out. Widening the visibility is the whole point
+ * of this subclass.
+ */
+private class MeasurableWebView(context: android.content.Context) : WebView(context) {
+    public override fun computeHorizontalScrollRange(): Int = super.computeHorizontalScrollRange()
+    public override fun computeVerticalScrollRange(): Int = super.computeVerticalScrollRange()
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,7 +102,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun DuoApp() {
     val scope = rememberCoroutineScope()
-    val session = remember { Session(scope) }
+    val context = LocalContext.current
+    val session = remember { Session(scope, context) }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Night)) {
         val wDp = maxWidth.value
@@ -83,7 +111,7 @@ fun DuoApp() {
         when (session.phase) {
             Phase.Menu -> MenuScreen(session, wDp, hDp)
             Phase.Waiting, Phase.Dead -> WaitingScreen(session)
-            Phase.Live -> LiveCanvas(session, wDp, hDp)
+            Phase.Live -> LiveCanvas(session)
         }
     }
 
@@ -95,28 +123,62 @@ fun DuoApp() {
 @Composable
 private fun MenuScreen(session: Session, wDp: Float, hDp: Float) {
     Column(
-        Modifier.fillMaxSize().padding(28.dp),
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 26.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("DUO", fontSize = 64.sp, color = Seam, fontFamily = FontFamily.Monospace)
-        Spacer(Modifier.height(4.dp))
+        Text("DUO", fontSize = 52.sp, color = Seam, fontFamily = FontFamily.Monospace)
         Text(
             "two phones · one canvas",
-            color = Dim, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
-        )
-
-        Spacer(Modifier.height(56.dp))
-        DuoButton("HOST   ·   left half", primary = true) { session.startHost(wDp, hDp) }
-        Spacer(Modifier.height(12.dp))
-        DuoButton("JOIN   ·   right half", primary = false) { session.startJoin(wDp, hDp) }
-
-        Spacer(Modifier.height(64.dp))
-        Text(
-            "SIZE CALIBRATION   ${String.format(Locale.US, "%.2f", session.calib)}×",
             color = Dim, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
         )
+
+        Spacer(Modifier.height(28.dp))
+        DuoButton("HOST   ·   left half", primary = true) { session.startHost(wDp, hDp) }
+        Spacer(Modifier.height(10.dp))
+        DuoButton("JOIN   ·   right half", primary = false) { session.startJoin(wDp, hDp) }
+
+        Spacer(Modifier.height(26.dp))
+        Label("MODE")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ModeButton("CANVAS", session.mode == Mode.Canvas) { session.mode = Mode.Canvas }
+            Spacer(Modifier.width(8.dp))
+            ModeButton("VIDEO", session.mode == Mode.Video) { session.mode = Mode.Video }
+            Spacer(Modifier.width(8.dp))
+            ModeButton("WEB", session.mode == Mode.Web) { session.mode = Mode.Web }
+        }
         Spacer(Modifier.height(8.dp))
+        when {
+            session.mode == Mode.Video && session.video == null -> Note(
+                "no duo.mp4 in the app folder — this falls back to the canvas"
+            )
+            session.mode == Mode.Video -> Note("duo.mp4 found")
+            session.mode == Mode.Web -> Note("The host types the address. Both phones load it.")
+            else -> Note("drag the ball across the join")
+        }
+
+        if (session.mode == Mode.Web) {
+            Spacer(Modifier.height(12.dp))
+            BasicTextField(
+                value = session.url,
+                onValueChange = { session.url = it },
+                singleLine = true,
+                textStyle = TextStyle(
+                    color = Seam, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                ),
+                cursorBrush = SolidColor(Seam),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, GridBold, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            )
+        }
+
+        Spacer(Modifier.height(22.dp))
+        Label("SIZE   ${String.format(Locale.US, "%.2f", session.calib)}x")
         Row(verticalAlignment = Alignment.CenterVertically) {
             StepButton("−") { session.calib = (session.calib - 0.02f).coerceIn(0.70f, 1.40f) }
             Spacer(Modifier.width(8.dp))
@@ -124,12 +186,56 @@ private fun MenuScreen(session: Session, wDp: Float, hDp: Float) {
             Spacer(Modifier.width(8.dp))
             StepButton("+") { session.calib = (session.calib + 0.02f).coerceIn(0.70f, 1.40f) }
         }
-        Spacer(Modifier.height(12.dp))
+
+        Spacer(Modifier.height(16.dp))
+        Label("PANEL GAP   ${mm(session.gapMm)} mm")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StepButton("−") { session.setGap(session.gapMm - 0.5f) }
+            Spacer(Modifier.width(8.dp))
+            StepButton("0") { session.setGap(0f) }
+            Spacer(Modifier.width(8.dp))
+            StepButton("+") { session.setGap(session.gapMm + 0.5f) }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Note(
+            "Measure the gap between the two lit screens with a ruler.\n" +
+                "Size only needs a change if the panels disagree."
+        )
+    }
+}
+
+@Composable
+private fun Label(text: String) {
+    Text(text, color = Dim, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+    Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+private fun Note(text: String) {
+    Text(
+        text, color = Faint, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+        textAlign = TextAlign.Center, lineHeight = 14.sp,
+    )
+}
+
+@Composable
+private fun ModeButton(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .border(1.dp, if (selected) Seam else GridBold, RoundedCornerShape(8.dp))
+            .background(
+                if (selected) Seam.copy(alpha = 0.12f) else Color.Transparent,
+                RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+    ) {
         Text(
-            "Set the same on both phones until the grid squares are the same\n" +
-                "physical size. Only needed if the panels disagree.",
-            color = Faint, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
-            textAlign = TextAlign.Center, lineHeight = 16.sp,
+            label,
+            color = if (selected) Seam else Dim,
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace,
         )
     }
 }
@@ -140,9 +246,9 @@ private fun StepButton(label: String, onClick: () -> Unit) {
         Modifier
             .border(1.dp, GridBold, RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 9.dp),
     ) {
-        Text(label, color = Dim, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+        Text(label, color = Dim, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
     }
 }
 
@@ -169,12 +275,12 @@ private fun WaitingScreen(session: Session) {
             fontFamily = FontFamily.Monospace, textAlign = TextAlign.Center,
         )
         if (!dead && session.isHost) {
-            Spacer(Modifier.height(60.dp))
+            Spacer(Modifier.height(56.dp))
             Text("host ip", color = Faint, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
             Spacer(Modifier.height(4.dp))
             Text(ip, color = Dim, fontSize = 16.sp, fontFamily = FontFamily.Monospace)
         }
-        Spacer(Modifier.height(56.dp))
+        Spacer(Modifier.height(52.dp))
         StepButton("back") { session.reset() }
     }
 }
@@ -182,12 +288,12 @@ private fun WaitingScreen(session: Session) {
 // ---------------------------------------------------------------- live
 
 @Composable
-private fun LiveCanvas(session: Session, wDp: Float, hDp: Float) {
+private fun LiveCanvas(session: Session) {
     val world = session.world
     val density = LocalDensity.current.density
+    val videoMode = session.videoMode
+    val webMode = session.webMode
 
-    // The ball lives in World (plain Kotlin, no snapshot state). Mirror it into
-    // Compose state once per frame so the Canvas redraws.
     var ballX by remember { mutableFloatStateOf(0f) }
     var ballY by remember { mutableFloatStateOf(0f) }
 
@@ -205,30 +311,36 @@ private fun LiveCanvas(session: Session, wDp: Float, hDp: Float) {
         }
     }
 
-    // Logical units per screen pixel, and where this phone's slice starts.
-    // sliceW == wDp / calib, and the canvas is wDp * density px wide, so this
-    // collapses to density * calib.
-    val unitsPerPx = 1f / (density * session.calib)
-    val padY = (hDp - world.h * session.calib) * density / 2f
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val padY = (maxHeight.value - world.h * session.calib) * density / 2f
+        val unitsPerPx = 1f / (density * session.calib)
 
-    // pointerInput(Unit) is installed once and never restarts, so it would keep
-    // the first composition's copy of the lambda. rememberUpdatedState makes the
-    // captured geometry track the current values instead of going stale.
-    val sendTouch by rememberUpdatedState<(Offset, Boolean) -> Unit> { p, down ->
-        session.touch(
-            world.sliceX + p.x * unitsPerPx,
-            (p.y - padY) * unitsPerPx,
-            down,
-        )
-    }
+        // pointerInput(Unit) is installed once and never restarts, so it would keep
+        // the first composition's copy of the lambda. rememberUpdatedState makes the
+        // captured geometry track the current values instead of going stale.
+        val sendTouch by rememberUpdatedState<(Offset, Boolean) -> Unit> { p, down ->
+            session.touch(
+                world.sliceX + p.x * unitsPerPx,
+                (p.y - padY) * unitsPerPx,
+                down,
+            )
+        }
 
-    Canvas(
-        Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
+        Box(Modifier.fillMaxSize()) {
+            when {
+                webMode -> WebSurface(session)
+                videoMode -> VideoSurface(session)
+            }
+
+            // The ball rides on top of the video. It does not ride on top of a web
+            // page: there the page needs every touch, and the page is the demo.
+            val gesture = if (webMode) Modifier
+            else Modifier.pointerInput(Unit) {
+                // requireUnconsumed is the default, so a touch that lands on the
+                // controls below never reaches the ball.
                 awaitPointerEventScope {
                     while (true) {
-                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val down = awaitFirstDown()
                         sendTouch(down.position, true)
                         var last = down.position
                         var pressed = true
@@ -247,51 +359,229 @@ private fun LiveCanvas(session: Session, wDp: Float, hDp: Float) {
                     }
                 }
             }
-    ) {
-        val u = size.width / world.sliceW
-        val padPx = (size.height - world.h * u) / 2f
 
-        clipRect {
-            translate(left = -world.sliceX * u, top = padPx) {
-                var x = 0f
-                while (x <= world.totalW) {
-                    val bold = x % 200f < 1f
-                    drawLine(
-                        if (bold) GridBold else Grid,
-                        Offset(x * u, 0f), Offset(x * u, world.h * u),
-                        strokeWidth = if (bold) 2f else 1f,
-                    )
-                    x += 50f
+            Canvas(Modifier.fillMaxSize().then(gesture)) {
+                val u = size.width / world.sliceW
+                val padPx = (size.height - world.h * u) / 2f
+
+                clipRect {
+                    translate(left = -world.sliceX * u, top = padPx) {
+                        if (!videoMode && !webMode) {
+                            var x = 0f
+                            while (x <= world.totalW) {
+                                val bold = x % 200f < 1f
+                                drawLine(
+                                    if (bold) GridBold else Grid,
+                                    Offset(x * u, 0f), Offset(x * u, world.h * u),
+                                    strokeWidth = if (bold) 2f else 1f,
+                                )
+                                x += 50f
+                            }
+                            var y = 0f
+                            while (y <= world.h) {
+                                val bold = y % 200f < 1f
+                                drawLine(
+                                    if (bold) GridBold else Grid,
+                                    Offset(0f, y * u), Offset(world.totalW * u, y * u),
+                                    strokeWidth = if (bold) 2f else 1f,
+                                )
+                                y += 50f
+                            }
+                        }
+
+                        // Sits on the seam, so it is drawn half here and half on the
+                        // neighbour. Turn the gap dial until the halves make one circle.
+                        if (!webMode) {
+                            val cx = world.totalW / 2f * u
+                            val cy = world.h / 2f * u
+                            drawCircle(
+                                if (videoMode) Color.White.copy(alpha = 0.5f) else GridBold,
+                                radius = 60f * u, center = Offset(cx, cy), style = Stroke(2f),
+                            )
+
+                            val c = Offset(ballX * u, ballY * u)
+                            drawCircle(BallColor.copy(alpha = 0.16f), radius = BALL_R * u * 2.2f, center = c)
+                            drawCircle(BallColor, radius = BALL_R * u, center = c)
+                        }
+                    }
                 }
-                var y = 0f
-                while (y <= world.h) {
-                    val bold = y % 200f < 1f
-                    drawLine(
-                        if (bold) GridBold else Grid,
-                        Offset(0f, y * u), Offset(world.totalW * u, y * u),
-                        strokeWidth = if (bold) 2f else 1f,
-                    )
-                    y += 50f
-                }
 
-                // Sits on the seam, so it is drawn half here and half on the neighbour.
-                val cx = world.totalW / 2f * u
-                val cy = world.h / 2f * u
-                drawCircle(GridBold, radius = 60f * u, center = Offset(cx, cy), style = Stroke(2f))
-
-                val c = Offset(ballX * u, ballY * u)
-                drawCircle(BallColor.copy(alpha = 0.16f), radius = BALL_R * u * 2.2f, center = c)
-                drawCircle(BallColor, radius = BALL_R * u, center = c)
+                // Mark this phone's inner edge so the physical bezel is accounted for.
+                val onLeft = world.sliceX == 0f
+                drawRect(
+                    Seam.copy(alpha = if (videoMode || webMode) 0.30f else 0.55f),
+                    topLeft = Offset(if (onLeft) size.width - 3f else 0f, padPx),
+                    size = Size(3f, world.h * u),
+                )
             }
-        }
 
-        // Mark this phone's inner edge so the physical bezel is accounted for.
-        val onLeft = world.sliceX == 0f
-        drawRect(
-            Seam.copy(alpha = 0.55f),
-            topLeft = Offset(if (onLeft) size.width - 3f else 0f, padPx),
-            size = Size(3f, world.h * u),
-        )
+            LiveControls(session)
+        }
+    }
+}
+
+/**
+ * The clip fills the logical width, and the surface shows only this phone's
+ * slice. That is the whole crop — see [videoTransform] for the maths.
+ */
+@Composable
+private fun VideoSurface(session: Session) {
+    val world = session.world
+    val aspect = session.videoAspect
+    val gap = session.gapMm            // read so the transform follows the dial
+    var size by remember { mutableStateOf(IntSize.Zero) }
+
+    // Recompute only when something that moves the picture changes.
+    val transform = remember(gap, aspect, size, world.totalW, world.h, world.sliceX) {
+        if (size.width == 0 || world.sliceW <= 0f) {
+            null
+        } else {
+            val u = size.width / world.sliceW
+            val padY = (size.height - world.h * u) / 2f
+            videoTransform(
+                viewW = size.width.toFloat(), viewH = size.height.toFloat(),
+                u = u, totalW = world.totalW, h = world.h,
+                sliceX = world.sliceX, padY = padY, videoAspect = aspect,
+            )
+        }
+    }
+
+    AndroidView(
+        factory = { ctx ->
+            TextureView(ctx).apply {
+                session.player?.setVideoTextureView(this)
+                // The surface size is only known after layout, and nothing else
+                // here recomposes on its own. Without this the transform never
+                // gets a size and the video draws uncropped.
+                addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
+                    size = IntSize(r - l, b - t)
+                }
+            }
+        },
+        update = { tv ->
+            if (tv.width != size.width || tv.height != size.height) {
+                size = IntSize(tv.width, tv.height)
+            }
+            transform?.let { t ->
+                val m = Matrix()
+                m.setScale(t.scaleX, t.scaleY)
+                m.postTranslate(t.tx, t.ty)
+                tv.setTransform(m)
+            }
+        },
+        modifier = Modifier.fillMaxSize(),
+    )
+}
+
+/**
+ * Both phones lay the page out at the same CSS width — the width of the whole
+ * canvas. Each phone then zooms by its own calibration, so one CSS pixel is the
+ * same physical size on both screens, and each scrolls to its own slice.
+ *
+ * If the two halves disagree, the page fought the viewport we injected. Try a
+ * page with a plain layout.
+ */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun WebSurface(session: Session) {
+    val world = session.world
+    val calib = session.calib
+    val gap = session.gapMm
+    val url = session.liveUrl
+    val order = session.scrollCmd
+
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    var view by remember { mutableStateOf<MeasurableWebView?>(null) }
+    var loaded by remember { mutableIntStateOf(0) }
+    var suppress by remember { mutableStateOf(false) }
+
+    AndroidView(
+        factory = { ctx ->
+            MeasurableWebView(ctx).apply {
+                settings.javaScriptEnabled = true
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = false
+                settings.builtInZoomControls = false
+                settings.displayZoomControls = false
+
+                setOnScrollChangeListener { _, _, y, _, _ ->
+                    if (suppress) return@setOnScrollChangeListener
+                    val range = (computeVerticalScrollRange() - height).coerceAtLeast(1)
+                    session.sendScroll(y.toFloat() / range)
+                }
+
+                // Same reason as the video surface: nothing else here recomposes,
+                // so the size must come from a layout callback or it stays zero
+                // and the scroll is never applied.
+                addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
+                    size = IntSize(r - l, b - t)
+                }
+
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(v: WebView, u: String) {
+                        // Pin the layout to the full canvas width, identically on
+                        // both phones, then let calibration set the physical size.
+                        val w = world.totalW
+                        val c = session.calib
+                        v.evaluateJavascript(
+                            "(function(){" +
+                                "var m=document.querySelector('meta[name=viewport]');" +
+                                "if(!m){m=document.createElement('meta');m.name='viewport';" +
+                                "document.head.appendChild(m);}" +
+                                "m.setAttribute('content','width=" + w + ", initial-scale=" + c + "');" +
+                                "})()",
+                            null,
+                        )
+                        loaded++
+                    }
+                }
+                if (url.isNotEmpty()) loadUrl(url)
+                view = this
+            }
+        },
+        update = { v -> if (url.isNotEmpty() && v.url != url) v.loadUrl(url) },
+        modifier = Modifier.fillMaxSize(),
+    )
+
+    // Place the window on this phone's slice, and follow the other phone's scroll.
+    LaunchedEffect(url, gap, size, loaded, order) {
+        val v = view ?: return@LaunchedEffect
+        if (size.width == 0 || world.totalW <= 0f) return@LaunchedEffect
+        val hRange = v.computeHorizontalScrollRange().toFloat()
+        val x = if (hRange > 0f) (world.sliceX / world.totalW * hRange).toInt() else 0
+        val vRange = (v.computeVerticalScrollRange() - size.height).coerceAtLeast(1)
+        val f = order?.fraction
+        val y = if (f != null && f >= 0f) (f * vRange).toInt() else v.scrollY
+        suppress = true
+        v.scrollTo(x, y)
+        v.post { suppress = false }
+    }
+}
+
+@Composable
+private fun LiveControls(session: Session) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 14.dp)
+            .padding(horizontal = 14.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (session.isHost) {
+            StepButton("gap −") { session.setGap(session.gapMm - 0.5f) }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                mm(session.gapMm),
+                color = Dim, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
+            )
+            Spacer(Modifier.width(8.dp))
+            StepButton("gap +") { session.setGap(session.gapMm + 0.5f) }
+        }
+        if (session.videoMode && session.isHost) {
+            Spacer(Modifier.width(16.dp))
+            StepButton(if (session.playing) "❚❚" else "▶") { session.togglePlay() }
+        }
     }
 }
 
@@ -302,9 +592,12 @@ private fun DuoButton(label: String, primary: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(58.dp)
+            .height(54.dp)
             .border(1.dp, if (primary) Seam else GridBold, RoundedCornerShape(12.dp))
-            .background(if (primary) Seam.copy(alpha = 0.10f) else Color.Transparent, RoundedCornerShape(12.dp))
+            .background(
+                if (primary) Seam.copy(alpha = 0.10f) else Color.Transparent,
+                RoundedCornerShape(12.dp),
+            )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
