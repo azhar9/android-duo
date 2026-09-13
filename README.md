@@ -481,6 +481,46 @@ else on that screen caused a redraw, so the crop maths never received a size.
 The app now takes the size from a layout callback. The web surface had the same
 fault, and the same correction.
 
+## What we tested, and on what
+
+Build **1.0.0 (33)**, commit `42acfaf`, on two phones: a Google Pixel 9 Pro XL
+(Android 17) and a Xiaomi Mi 11X (Android 13). Both phones carried the same
+file. Everything below was seen on the phones, not worked out on paper.
+
+| What | What we saw |
+|---|---|
+| Both phones on one build | The setup screen read `1.0.0 (33) · 42acfaf` on both, with the same build time |
+| Grid, ball | One ball across the join. Dragged on the host, dragged on the client, followed either way |
+| Video | One film, both halves, the same duration on both. The client followed a clip changed on the host mid-session |
+| Web | Both phones loaded the page and scrolled together, at the same scroll number. The address bar on the host moved the client to the same article |
+| Web layout | Both phones reported a layout width of 843, with the infobox 366 pixels down the document — the same page, cut in two |
+| Picture | One photo across both screens, its lines continuous across the join |
+| Send from another app | A link shared from a chat app arrived with the address filled and the Web mode chosen |
+| Settings remembered | Set 4.5 mm and 106%, closed the app, opened it: both came back |
+| Two different builds | With a second build on one phone, both phones showed the same refusal and named the reason |
+
+**Found while testing, and fixed before this build.** The size setting of each
+phone was being fed into the width of the page. Two phones with different sizes
+laid the same page out at two different widths — 894 and 843 — so the lines
+broke in different places and the halves could never meet. The page is now laid
+out at one width on both phones, and the size is applied as a zoom.
+
+**Not tested here.** The share path for a video was checked as far as the
+command line allows: the app received the file and reached the clip code, but a
+test sender on the command line cannot pass a media store permission the way a
+real app does. Sharing a video from Google Photos is worth one look on your own
+phones.
+
+### What we chose
+
+| Choice | Why | What it costs |
+|---|---|---|
+| One canvas measured in dp | A shape is the same physical size on both phones with no calibration maths | Both phones must agree on the size setting |
+| The host owns the clock and the layout | One authority, so the two halves cannot drift apart | The other phone mirrors and cannot lead |
+| Each phone renders the web page | Real text, native scrolling, both phones can scroll and tap | The halves are two renders, so a page that differs per phone will not meet at the seam |
+| Pictures and documents sent as frames | A photo is not a layout, so one render cut in two is exact | A JPEG a frame, which is fine for a still picture and would not be for a film |
+| Video streamed over HTTP with ranges | The player can seek, and it is cached on the other phone | One phone serves, so that phone must keep the app open |
+
 ## Limits
 
 - The app needs a WiFi network. A USB-C cable does not carry the signal.
