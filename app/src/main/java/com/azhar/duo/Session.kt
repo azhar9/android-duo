@@ -52,6 +52,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
     val world = World()
     val media = MediaServer(appContext, scope)
+    val streamer = FrameServer(scope)
     private var link = Link(scope)
     private var collectJob: Job? = null
 
@@ -68,6 +69,9 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
     /** Physical gap between the two panels, in millimetres. The host owns this. */
     var gapMm by mutableFloatStateOf(3f)
+
+    /** Side by side, or one above the other. The host owns this. */
+    var axis by mutableStateOf(Axis.Horizontal); private set
 
     // --- menu choices, host only. liveMode is what actually runs. ---
     var mode by mutableStateOf(Mode.Video)
@@ -137,6 +141,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
         link.close()
         stopPlayer()
         media.stop()
+        streamer.stop()
         liveMode = Mode.Canvas
         source = Source.None
         clipName = ""
@@ -190,6 +195,15 @@ class Session(private val scope: CoroutineScope, context: Context) {
         if (isHost && phase == Phase.Live) {
             link.send(JSONObject().put("t", "gap").put("mm", gapMm.toDouble()))
         }
+    }
+
+    /** Side by side, or stacked. The host tells the client. */
+    fun chooseAxis(a: Axis) {
+        axis = a
+        if (phase != Phase.Live) return
+        world.setAxis(a)
+        world.place(world.totalW / 2f, world.h / 2f)
+        if (isHost) link.send(JSONObject().put("t", "axis").put("a", a.name))
     }
 
     fun togglePlay() {
@@ -300,21 +314,25 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
                 // The host's own clip wins when both phones have one. The user can
                 // always pick again on either phone to take over.
-                val use = when {
-                    mode != Mode.Video -> Mode.Canvas
-                    myClip != null -> {
-                        source = Source.Me
-                        clipName = myClipName
-                        Mode.Video
+                val use = when (mode) {
+                    Mode.Canvas -> Mode.Canvas
+                    Mode.Web -> Mode.Web
+                    Mode.Video -> when {
+                        myClip != null -> {
+                            source = Source.Me
+                            clipName = myClipName
+                            Mode.Video
+                        }
+                        peerClip.isNotEmpty() -> {
+                            source = Source.Peer
+                            clipName = peerClip
+                            Mode.Video
+                        }
+                        // No clip on either phone. The grid still works.
+                        else -> Mode.Canvas
                     }
-                    peerClip.isNotEmpty() -> {
-                        source = Source.Peer
-                        clipName = peerClip
-                        Mode.Video
-                    }
-                    else -> Mode.Canvas
                 }
-                begin(aw, ah, bw, bh, amLeft = true, use, gapMm, url, source, clipName)
+                begin(aw, ah, bw, bh, first = true, use, gapMm, url, source, clipName, axis)
                 link.send(
                     JSONObject().put("t", "layout")
                         .put("aw", aw.toDouble()).put("ah", ah.toDouble())
@@ -322,6 +340,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
                         .put("m", use.name.lowercase())
                         .put("url", url)
                         .put("gap", gapMm.toDouble())
+                        .put("ax", axis.name)
                         .put("src", if (source == Source.Me) "host" else if (source == Source.Peer) "client" else "")
                         .put("n", clipName)
                 )
@@ -350,10 +369,11 @@ class Session(private val scope: CoroutineScope, context: Context) {
                 begin(
                     j.optDouble("aw").toFloat(), j.optDouble("ah").toFloat(),
                     j.optDouble("bw").toFloat(), j.optDouble("bh").toFloat(),
-                    amLeft = false, use = if (m == Mode.Video && source == Source.None) Mode.Canvas else m,
+                    first = false, use = if (m == Mode.Video && source == Source.None) Mode.Canvas else m,
                     gap = j.optDouble("gap", 3.0).toFloat(),
                     url = j.optString("url"),
                     src = source, name = clipName,
+                    ax = if (j.optString("ax") == "Vertical") Axis.Vertical else Axis.Horizontal,
                 )
             }
 
@@ -374,6 +394,12 @@ class Session(private val scope: CoroutineScope, context: Context) {
             "gap" -> if (!isHost) {
                 gapMm = j.optDouble("mm", 0.0).toFloat().coerceIn(0f, 20f)
                 world.setGapMm(gapMm)
+            }
+
+            "axis" -> if (!isHost) {
+                axis = if (j.optString("a") == "Vertical") Axis.Vertical else Axis.Horizontal
+                world.setAxis(axis)
+                world.place(world.totalW / 2f, world.h / 2f)
             }
 
             "vid" -> if (!isHost) followHost(j)
@@ -413,18 +439,21 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
     private fun begin(
         aw: Float, ah: Float, bw: Float, bh: Float,
-        amLeft: Boolean, use: Mode, gap: Float, url: String,
-        src: Source, name: String,
+        first: Boolean, use: Mode, gap: Float, url: String,
+        src: Source, name: String, ax: Axis,
     ) {
         gapMm = gap.coerceIn(0f, 20f)
         liveMode = use
         liveUrl = url
         source = src
         clipName = name
-        world.layout(aw, ah, bw, bh, amLeft)
+        axis = ax
+        world.layout(aw, ah, bw, bh, first, ax)
         world.setGapMm(gapMm)
         world.place(world.totalW / 2f, world.h / 2f)
         if (use == Mode.Video) startPlayer() else stopPlayer()
+        // Web mode streams rendered frames, so only the host serves them.
+        if (use == Mode.Web && isHost) streamer.start() else streamer.stop()
         note = ""
         phase = Phase.Live
     }

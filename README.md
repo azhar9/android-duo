@@ -6,16 +6,16 @@ Two Android phones act as one screen. A fun little project.
 
 ## What this app does
 
-Duo puts one canvas across two phones. Each phone shows one half of that canvas.
-Move an object across the join. The object continues on the other phone.
+Duo puts one picture across two phones. Each phone shows one half of it, and the
+two halves line up as if the screens were one.
 
 The app has three modes. The host picks the mode. Both phones then follow it.
 
 | Mode | What the two phones show |
 |---|---|
-| Canvas | A grid and a ball. Drag the ball from one phone to the other. |
-| Video | One video file. Each phone shows its own half of the picture. |
-| Web | One web page. Each phone shows its own half of the page. |
+| Grid | A grid and a ball. Drag the ball from one phone to the other. This is the setup screen: use it to set the gap and check the alignment. |
+| Video | One video file. Either phone can serve it; the other streams it. |
+| Web | One web page. The host lays it out once and streams the picture. |
 
 This project takes its idea from foldable phones and dual-screen phones. The
 Samsung Fold has one panel in one body. The Microsoft Surface Duo has two panels
@@ -82,25 +82,24 @@ If the command still fails, install the APK by hand:
 4. Permit the installation from unknown sources.
 5. Touch Install.
 
-## Put the video on both phones
+## Choose a clip
 
-The video mode needs one clip on each phone. The app looks for this exact path:
+Touch **Choose** on either phone and pick a video from that phone's gallery.
 
-```
-/sdcard/Android/data/com.azhar.duo/files/duo.mp4
-```
+Whichever phone you pick on serves the clip, and the other one streams it. There
+is no rule to remember about which phone is the host — pick on the phone that
+holds the video you want, and the other follows.
 
-Push your clip to both phones:
+You can change it while the app runs. Touch **Swap** on either phone and that
+phone takes over.
 
-```
-adb -s <serial> push myvideo.mp4 /sdcard/Android/data/com.azhar.duo/files/duo.mp4
-```
+The serving phone does not copy the file. It runs a small HTTP server and the
+other phone's player asks for the parts it needs, so playback starts at once and
+seeking works. A long film does not have to cross the network before it starts.
 
-Use a wide clip. The video fills the width of the two screens together. A tall
-clip is cropped at the top and the bottom.
-
-The menu shows "duo.mp4 found" when the app finds the file. Choose the Canvas
-mode if the file is absent. The app falls back to the Canvas mode by itself.
+**Sound comes from the phone that holds the clip.** Two phones in one room
+playing the same audio a few milliseconds apart would echo, so the other one is
+muted.
 
 ## Run the demo
 
@@ -122,11 +121,11 @@ Touch `back`, or use the back gesture, to go to the menu.
 
 ## Choose the mode
 
-Touch CANVAS, VIDEO, or WEB on the menu before you touch HOST or JOIN. The host
-sends the choice to the client.
+Touch **Grid**, **Video**, or **Web** on the setup screen before you start. The
+host sends the choice to the client.
 
-**Canvas.** A grid of 50 dp squares and one ball. The grid shows the join
-clearly. Use it to set the gap.
+**Grid.** A grid of 50 dp squares and one ball. This is the setup screen: the
+grid shows the join clearly, so use it to set the gap and check the alignment.
 
 **Video.** Both phones play the same clip. The host owns the clock. It sends its
 position four times each second. The client takes the play state from the host,
@@ -134,12 +133,32 @@ and moves to the host position if it drifts more than 200 ms.
 
 Only the host makes sound. Two phones in one room would echo.
 
-**Web.** The host types an address. Both phones load that address. The host owns
-the vertical scroll position. Either phone can scroll.
+**Web.** The host types an address. That phone lays the page out once, shows
+its own half, and streams the other half as pictures.
 
-The web mode is the experimental one. Both phones must lay the page out at the
-same width, and some pages refuse. A plain page works. A complex one often does
-not. If the two halves disagree, try a different page.
+Only one phone runs a browser, so the two halves cannot disagree about layout.
+This is also why a video on the page plays with sound: the host is an ordinary
+browser on an ordinary device, and its sound simply plays.
+
+The picture travels as a JPEG for each frame, about 10 each second. On a local
+network that is roughly 1 MB for each second. Text is slightly soft because it
+is a picture of text.
+
+**Known limitation.** The page may not fill the whole canvas width. Android's
+WebView chooses its own zoom in ways that are hard to predict, so the right-hand
+phone can show empty space where the page should continue. The two halves always
+agree with each other, but the page may not reach the far edge.
+
+
+## How the phones sit
+
+The two phones can sit **side by side** or **stacked**, one above the other. Set
+it on the setup screen; the host tells the client.
+
+A wide video suits two phones side by side. A tall video suits two stacked
+phones, where the picture fills the height instead of being lost to the sides.
+
+The app is not locked to portrait. Turn either phone and it follows.
 
 ## Calibrate the two phones
 
@@ -191,6 +210,12 @@ A dp is a density-independent pixel. Android supplies about 160 dp for each
 inch. A shape of 100 dp is thus almost the same physical size on both phones.
 This is the key idea of the project.
 
+### The span
+
+The canvas runs along one axis. Side by side, that axis is horizontal. Stacked,
+it is vertical. Everything else follows from that choice: the slice, the gap,
+the walls the ball bounces off, and the crop taken for the other phone.
+
 ### The gap between the panels
 
 The left phone holds the logical range `[0, aw)`. The gap holds `[aw, aw + gap)`.
@@ -208,15 +233,18 @@ The app scales the video on each phone by the same amount, and moves it by the
 width of that phone's slice. The test proves that the hidden band equals the
 physical gap.
 
-### The web page
+### The web picture
 
-Both phones must lay the page out at the same width. The app gives each phone a
-viewport as wide as the whole canvas. Each phone then zooms by its own size
-value. One CSS pixel is thus the same physical size on both screens.
+`FrameServer` takes one ServerSocket for the whole session and holds it open.
+Binding again between viewers would leave a window where a reconnect is refused.
 
-Each phone then scrolls sideways to its own slice. Only the vertical position
-needs to travel between the phones, and the app sends it as a fraction so that
-the two screens need not agree on pixel counts.
+Each frame is a four-byte length and then the picture. A socket delivers bytes
+in arbitrary pieces, so without a length the reader cannot tell a whole frame
+from half of one.
+
+The host draws the page into one bitmap and cuts both halves out of it, so the
+two halves always agree. It reuses that bitmap for every frame — making a
+four-megapixel bitmap ten times a second would bury the collector.
 
 ### The host is the clock
 
@@ -231,12 +259,17 @@ local network is a few milliseconds. The user does not see this delay.
 
 ```
 app/src/main/java/com/azhar/duo/
-  World.kt         The canvas, the gap, the video crop maths, and the ball.
+  World.kt         The canvas, the axis, the gap, the crop maths, and the ball.
   Link.kt          The discovery and the network connection.
-  Session.kt       The connection between the network, the video, and the canvas.
-  MainActivity.kt  The user interface, the video surface, and the web surface.
+  MediaServer.kt   Serves the picked clip to the other phone over HTTP.
+  Range.kt         Reads HTTP Range headers. Pure, so it is testable.
+  Stream.kt        Sends the rendered page to the other phone as frames.
+  Session.kt       The connection between the network, the media, and the canvas.
+  MainActivity.kt  The user interface, the video surface, and the web surfaces.
 app/src/test/java/com/azhar/duo/
-  WorldTest.kt     Nineteen tests for the geometry and the physics.
+  WorldTest.kt     Thirty tests for the geometry and the physics.
+  RangeTest.kt     Thirteen tests for byte ranges.
+  StreamTest.kt    Ten tests for the frame protocol.
 ```
 
 `World.kt` has no Android imports. You can thus test the geometry and the
@@ -247,14 +280,19 @@ movement on a computer.
 The two phones trade JSON messages on one TCP socket.
 
 | Direction | Message |
-|---|---|
-| client to host | `{"t":"hello","w":<width>,"h":<height>,"v":<has video>}` |
-| host to client | `{"t":"layout","aw":..,"ah":..,"bw":..,"bh":..,"m":"<mode>","url":"..","gap":..}` |
+|---|---|---|
+| client to host | `{"t":"hello","w":<width>,"h":<height>,"n":"<clip name>"}` |
+| host to client | `{"t":"layout","aw":..,"ah":..,"bw":..,"bh":..,"m":"<mode>","url":"..","gap":..,"ax":"<axis>","src":"<who holds the clip>","n":".."}` |
 | host to client | `{"t":"ball","x":..,"y":..,"vx":..,"vy":..}` for each frame |
 | host to client | `{"t":"vid","p":<position ms>,"r":<playing>}` |
 | client to host | `{"t":"touch","x":..,"y":..,"d":<down>}` |
 | either to either | `{"t":"gap","mm":<gap>}` |
+| either to either | `{"t":"axis","a":"<Horizontal or Vertical>"}` |
+| either to either | `{"t":"source","n":"<clip name>"}` |
 | either to either | `{"t":"scroll","f":<fraction>}` |
+
+The clip itself does not travel on this socket. It goes over HTTP, on its own
+port, so the player can ask for ranges.
 
 Both phones calculate the same layout from the same four numbers. The layout
 message is thus only a sync point.
@@ -323,8 +361,10 @@ fault, and the same correction.
   screen shows the IP address of the host.
 - The app does not change the system. It cannot show other apps across the two
   screens.
-- The two phones must have the same clip for the video mode, and the same page
-  must work on both for the web mode.
+- In web mode the page may not reach the far edge of the canvas, because WebView
+  chooses its own zoom.
+- The picture in web mode is a JPEG for each frame, so fine text is softer than
+  real text.
 - The two phones must sit at the same height. The app does not correct a
   vertical offset.
 
@@ -335,6 +375,8 @@ fault, and the same correction.
 - Correct the vertical alignment. The two phones can sit at different heights.
 - Connect more than two phones. `World.kt` already divides the canvas into any
   number of parts. `Link.kt` is the part that assumes two phones.
+- Encode the web picture as H.264 instead of JPEG. That would cut the bandwidth
+  several times over and make the text sharper.
 - Show a different source on each phone, and move an object between them.
 
 ## License

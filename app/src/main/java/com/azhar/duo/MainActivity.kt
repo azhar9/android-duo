@@ -2,6 +2,9 @@ package com.azhar.duo
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Bundle
@@ -20,6 +23,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +35,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +46,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -51,18 +59,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
@@ -72,27 +87,56 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.util.Locale
 
-private val Night = Color(0xFF07080C)
-private val Grid = Color(0xFF161C27)
-private val GridBold = Color(0xFF243044)
-private val BallColor = Color(0xFFFF4D6D)
+// ---------------------------------------------------------------- theme
+
+private val Page = Color(0xFFFFFFFF)
+private val CardBg = Color(0xFFFFFFFF)
+private val Line = Color(0xFFE6E6E6)
+private val Ink = Color(0xFF222222)
+private val Sub = Color(0xFF717171)
+private val Accent = Color(0xFFFF385C)
+private val AccentSoft = Color(0xFFFFEDF0)
+private val Night = Color(0xFF000000)
+private val Grid = Color(0xFF1A1A1A)
+private val GridBold = Color(0xFF2E2E2E)
+private val BallColor = Color(0xFFFF385C)
 private val Seam = Color(0xFF00E5A0)
-private val Dim = Color(0xFF8892A6)
-private val Faint = Color(0xFF49546A)
 
 private fun mm(v: Float) = String.format(Locale.US, "%.1f", v)
+private fun pct(v: Float) = String.format(Locale.US, "%.0f%%", v * 100f)
 
 /**
  * WebView keeps its scroll extents protected, and they are the only way to ask
  * how wide the page actually laid out. Widening the visibility is the whole point
  * of this subclass.
  */
-private class MeasurableWebView(context: android.content.Context) : WebView(context) {
+private class MeasurableWebView(context: Context) : WebView(context) {
     public override fun computeHorizontalScrollRange(): Int = super.computeHorizontalScrollRange()
     public override fun computeVerticalScrollRange(): Int = super.computeVerticalScrollRange()
 }
+
+/** Where the logical canvas sits inside a full-screen surface. */
+private class Viewport(val u: Float, val padX: Float, val padY: Float)
+
+private fun viewportOf(world: World, viewW: Float, viewH: Float): Viewport =
+    when (world.axis) {
+        Axis.Horizontal -> {
+            val u = if (world.sliceW > 0f) viewW / world.sliceW else 1f
+            Viewport(u, 0f, (viewH - world.h * u) / 2f)
+        }
+        Axis.Vertical -> {
+            val u = if (world.sliceH > 0f) viewH / world.sliceH else 1f
+            Viewport(u, (viewW - world.totalW * u) / 2f, 0f)
+        }
+    }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,140 +157,666 @@ fun DuoApp() {
     val context = LocalContext.current
     val session = remember { Session(scope, context) }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Night)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Page)) {
         val wDp = maxWidth.value
         val hDp = maxHeight.value
         when (session.phase) {
-            Phase.Menu -> MenuScreen(session, wDp, hDp)
+            Phase.Menu -> SetupScreen(session, wDp, hDp)
             Phase.Waiting, Phase.Dead -> WaitingScreen(session)
-            Phase.Live -> LiveCanvas(session)
+            Phase.Live -> LiveScreen(session)
         }
     }
 
     BackHandler(enabled = session.phase != Phase.Menu) { session.reset() }
 }
 
-// ---------------------------------------------------------------- menu
+// ---------------------------------------------------------------- setup
 
 @Composable
-private fun MenuScreen(session: Session, wDp: Float, hDp: Float) {
+private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
+    val pick = clipPicker { uri, name -> session.pickClip(uri, name) }
+
     Column(
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 26.dp, vertical = 24.dp),
+            .padding(horizontal = 20.dp, vertical = 28.dp),
+    ) {
+        Text("Duo", fontSize = 40.sp, color = Ink, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Two phones, one big screen.",
+            fontSize = 15.sp, color = Sub,
+        )
+
+        Spacer(Modifier.height(24.dp))
+
+        // --- connect ---
+        Panel {
+            Text("Start a session", fontSize = 17.sp, color = Ink, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Both phones must be on the same WiFi. One can share a hotspot.",
+                fontSize = 13.sp, color = Sub, lineHeight = 18.sp,
+            )
+            Spacer(Modifier.height(16.dp))
+            BigButton("Be the host", primary = true) { session.startHost(wDp, hDp) }
+            Spacer(Modifier.height(10.dp))
+            BigButton("Join a host", primary = false) { session.startJoin(wDp, hDp) }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // --- what to show ---
+        Panel {
+            SectionTitle("What to show")
+            Segmented(
+                options = listOf("Grid", "Video", "Web"),
+                selected = when (session.mode) {
+                    Mode.Canvas -> 0
+                    Mode.Video -> 1
+                    Mode.Web -> 2
+                },
+                onSelect = {
+                    session.mode = when (it) {
+                        0 -> Mode.Canvas
+                        1 -> Mode.Video
+                        else -> Mode.Web
+                    }
+                },
+            )
+            Spacer(Modifier.height(12.dp))
+            when (session.mode) {
+                Mode.Video -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                session.myClip?.let { shortName(session.clipName, 24) }
+                                    ?: "No clip on this phone",
+                                fontSize = 14.sp,
+                                color = if (session.myClip == null) Sub else Ink,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "Choose one here, or on the other phone.",
+                                fontSize = 12.sp, color = Sub,
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        SmallButton(if (session.myClip == null) "Choose" else "Change") {
+                            pick.launch(pickerRequest())
+                        }
+                    }
+                }
+                Mode.Web -> {
+                    Text("Address", fontSize = 13.sp, color = Sub)
+                    Spacer(Modifier.height(6.dp))
+                    BasicTextField(
+                        value = session.url,
+                        onValueChange = { session.url = it },
+                        singleLine = true,
+                        textStyle = TextStyle(color = Ink, fontSize = 14.sp),
+                        cursorBrush = SolidColor(Accent),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFFF7F7F7))
+                            .border(1.dp, Line, RoundedCornerShape(10.dp))
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "The host renders the page and streams it. Both phones show one half.",
+                        fontSize = 12.sp, color = Sub, lineHeight = 16.sp,
+                    )
+                }
+                Mode.Canvas -> {
+                    Text(
+                        "A grid and a ball. Use it to line the two screens up, and to " +
+                            "check the gap.",
+                        fontSize = 13.sp, color = Sub, lineHeight = 18.sp,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // --- how they sit ---
+        Panel {
+            SectionTitle("How the phones sit")
+            Segmented(
+                options = listOf("Side by side", "Stacked"),
+                selected = if (session.axis == Axis.Horizontal) 0 else 1,
+                onSelect = { session.chooseAxis(if (it == 0) Axis.Horizontal else Axis.Vertical) },
+            )
+            Spacer(Modifier.height(12.dp))
+            StepperRow(
+                label = "Gap between the screens",
+                value = "${mm(session.gapMm)} mm",
+                onMinus = { session.setGap(session.gapMm - 0.5f) },
+                onPlus = { session.setGap(session.gapMm + 0.5f) },
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Measure the lit screens with a ruler. A wide video suits side by side; " +
+                    "a tall one suits stacked.",
+                fontSize = 12.sp, color = Sub, lineHeight = 16.sp,
+            )
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // --- size ---
+        Panel {
+            SectionTitle("Size on this phone")
+            StepperRow(
+                label = "Match the other screen",
+                value = pct(session.calib),
+                onMinus = { session.calib = (session.calib - 0.02f).coerceIn(0.70f, 1.40f) },
+                onPlus = { session.calib = (session.calib + 0.02f).coerceIn(0.70f, 1.40f) },
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Change this only when a grid square is a different size on the two " +
+                    "screens. Set it before you start.",
+                fontSize = 12.sp, color = Sub, lineHeight = 16.sp,
+            )
+        }
+
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+// ---------------------------------------------------------------- waiting
+
+@Composable
+private fun WaitingScreen(session: Session) {
+    val dead = session.phase == Phase.Dead
+    val ip = remember { if (session.isHost) Link.localIp() else "" }
+
+    Column(
+        Modifier.fillMaxSize().padding(28.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("DUO", fontSize = 52.sp, color = Seam, fontFamily = FontFamily.Monospace)
-        Text(
-            "two phones · one canvas",
-            color = Dim, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
-        )
+        if (!dead) {
+            CircularProgressIndicator(color = Accent, strokeWidth = 3.dp)
+            Spacer(Modifier.height(24.dp))
+            Text("Looking for the other phone", fontSize = 17.sp, color = Ink)
+            if (session.isHost) {
+                Spacer(Modifier.height(28.dp))
+                Text("This phone's address", fontSize = 13.sp, color = Sub)
+                Spacer(Modifier.height(4.dp))
+                Text(ip, fontSize = 20.sp, color = Ink, fontWeight = FontWeight.Medium)
+            }
+        } else {
+            Text("Disconnected", fontSize = 20.sp, color = Ink, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                session.note, fontSize = 14.sp, color = Sub, textAlign = TextAlign.Center,
+            )
+        }
+        Spacer(Modifier.height(36.dp))
+        SmallButton("Back") { session.reset() }
+    }
+}
 
-        Spacer(Modifier.height(28.dp))
-        DuoButton("HOST   ·   left half", primary = true) { session.startHost(wDp, hDp) }
-        Spacer(Modifier.height(10.dp))
-        DuoButton("JOIN   ·   right half", primary = false) { session.startJoin(wDp, hDp) }
+// ---------------------------------------------------------------- live
 
-        Spacer(Modifier.height(24.dp))
-        val pick = clipPicker { uri, name -> session.pickClip(uri, name) }
-        Label("CLIP")
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StepButton(if (session.myClip == null) "PICK VIDEO" else "CHANGE") {
+@Composable
+private fun LiveScreen(session: Session) {
+    val world = session.world
+
+    var frame by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        var last = 0L
+        while (true) {
+            withFrameNanos { now ->
+                if (last != 0L) {
+                    session.tick(((now - last) / 1e9f).coerceIn(0f, 0.05f))
+                }
+                last = now
+                frame++
+            }
+        }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize().background(Night)) {
+        val viewW = maxWidth.value * LocalDensity.current.density
+        val viewH = maxHeight.value * LocalDensity.current.density
+        val vp = viewportOf(world, viewW, viewH)
+
+        val sendTouch by rememberUpdatedState<(Offset, Boolean) -> Unit> { p, down ->
+            session.touch(
+                world.sliceX + (p.x - vp.padX) / vp.u,
+                world.sliceY + (p.y - vp.padY) / vp.u,
+                down,
+            )
+        }
+
+        Box(Modifier.fillMaxSize()) {
+            when {
+                session.webMode && session.isHost -> RemoteHostSurface(session)
+                session.webMode -> RemoteViewerSurface(session)
+                session.videoMode -> VideoSurface(session)
+            }
+
+            // The ball rides on top of the video. It does not ride on top of a web
+            // page: there the page needs every touch, and the page is the demo.
+            val gesture = if (session.webMode) Modifier
+            else Modifier.pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val down = awaitFirstDown()
+                        sendTouch(down.position, true)
+                        var last = down.position
+                        var pressed = true
+                        while (pressed) {
+                            val ev = awaitPointerEvent()
+                            val ch = ev.changes.firstOrNull { it.id == down.id }
+                            if (ch == null || !ch.pressed) {
+                                pressed = false
+                            } else {
+                                last = ch.position
+                                sendTouch(last, true)
+                                ch.consume()
+                            }
+                        }
+                        sendTouch(last, false)
+                    }
+                }
+            }
+
+            Canvas(Modifier.fillMaxSize().then(gesture)) {
+                val v = viewportOf(world, size.width, size.height)
+                val u = v.u
+                clipRect {
+                    translate(left = v.padX - world.sliceX * u, top = v.padY - world.sliceY * u) {
+                        if (!session.videoMode && !session.webMode) {
+                            var x = 0f
+                            while (x <= world.totalW) {
+                                val bold = x % 200f < 1f
+                                drawLine(
+                                    if (bold) GridBold else Grid,
+                                    Offset(x * u, 0f), Offset(x * u, world.h * u),
+                                    strokeWidth = if (bold) 2f else 1f,
+                                )
+                                x += 50f
+                            }
+                            var y = 0f
+                            while (y <= world.h) {
+                                val bold = y % 200f < 1f
+                                drawLine(
+                                    if (bold) GridBold else Grid,
+                                    Offset(0f, y * u), Offset(world.totalW * u, y * u),
+                                    strokeWidth = if (bold) 2f else 1f,
+                                )
+                                y += 50f
+                            }
+                        }
+
+                        // Sits on the seam, drawn half here and half on the neighbour.
+                        if (!session.webMode) {
+                            val cx = world.totalW / 2f * u
+                            val cy = world.h / 2f * u
+                            drawCircle(
+                                if (session.videoMode) Color.White.copy(alpha = 0.5f) else GridBold,
+                                radius = 60f * u, center = Offset(cx, cy), style = Stroke(2f),
+                            )
+                            val c = Offset(world.bx * u, world.by * u)
+                            drawCircle(BallColor.copy(alpha = 0.16f), radius = BALL_R * u * 2.2f, center = c)
+                            drawCircle(BallColor, radius = BALL_R * u, center = c)
+                        }
+                    }
+                }
+
+                // Mark this phone's inner edge so the physical bezel is accounted for.
+                val first = when (world.axis) {
+                    Axis.Horizontal -> world.sliceX == 0f
+                    Axis.Vertical -> world.sliceY == 0f
+                }
+                val alpha = if (session.videoMode || session.webMode) 0.30f else 0.55f
+                when (world.axis) {
+                    Axis.Horizontal -> drawRect(
+                        Seam.copy(alpha = alpha),
+                        topLeft = Offset(if (first) size.width - 3f else 0f, v.padY),
+                        size = Size(3f, world.h * u),
+                    )
+                    Axis.Vertical -> drawRect(
+                        Seam.copy(alpha = alpha),
+                        topLeft = Offset(v.padX, if (first) size.height - 3f else 0f),
+                        size = Size(world.totalW * u, 3f),
+                    )
+                }
+            }
+
+            LiveBar(session, Modifier.align(Alignment.BottomCenter))
+        }
+
+        if (frame < 0) Unit
+    }
+}
+
+/** The floating control bar over the content. */
+@Composable
+private fun LiveBar(session: Session, modifier: Modifier = Modifier) {
+    val pick = clipPicker { uri, name -> session.pickClip(uri, name) }
+
+    Column(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Row(
+            Modifier
+                .shadow(10.dp, RoundedCornerShape(28.dp))
+                .clip(RoundedCornerShape(28.dp))
+                .background(Color(0xE6151515))
+                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(28.dp))
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (session.isHost) {
+                BarButton("−") { session.setGap(session.gapMm - 0.5f) }
+                Text(
+                    "${mm(session.gapMm)}",
+                    color = Color.White, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+                BarButton("+") { session.setGap(session.gapMm + 0.5f) }
+                Spacer(Modifier.width(10.dp))
+            }
+            BarButton(if (session.myClip == null) "Clip" else "Swap") {
                 pick.launch(pickerRequest())
             }
-            Spacer(Modifier.width(10.dp))
+            if (session.videoMode && session.isHost) {
+                Spacer(Modifier.width(10.dp))
+                BarButton(if (session.playing) "Pause" else "Play") { session.togglePlay() }
+            }
+        }
+
+        if (session.videoMode && session.clipName.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
             Text(
-                session.myClip?.let { shortName(session.clipName) } ?: "none on this phone",
-                color = if (session.myClip == null) Faint else Seam,
+                (if (session.source == Source.Me) "Playing here · " else "Streaming · ") +
+                    shortName(session.clipName, 34),
+                color = Color(0x99FFFFFF),
                 fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.height(8.dp))
-        Note(
-            "Pick on either phone. That phone serves the clip and makes the sound;\n" +
-                "the other one streams it. No need to think about which is host."
-        )
-
-        Spacer(Modifier.height(22.dp))
-        Label("MODE")
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            ModeButton("CANVAS", session.mode == Mode.Canvas) { session.mode = Mode.Canvas }
-            Spacer(Modifier.width(8.dp))
-            ModeButton("VIDEO", session.mode == Mode.Video) { session.mode = Mode.Video }
-            Spacer(Modifier.width(8.dp))
-            ModeButton("WEB", session.mode == Mode.Web) { session.mode = Mode.Web }
-        }
-        Spacer(Modifier.height(8.dp))
-        when {
-            session.mode == Mode.Video && session.myClip == null -> Note(
-                "no clip picked here — pick one, or let the other phone pick.\n" +
-                    "Without a clip the canvas runs instead."
-            )
-            session.mode == Mode.Video -> Note("ready to play")
-            session.mode == Mode.Web -> Note("The host types the address. Both phones load it.")
-            else -> Note("the grid is the setup and test screen")
-        }
-
-        if (session.mode == Mode.Web) {
-            Spacer(Modifier.height(12.dp))
-            BasicTextField(
-                value = session.url,
-                onValueChange = { session.url = it },
-                singleLine = true,
-                textStyle = TextStyle(
-                    color = Seam, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
-                ),
-                cursorBrush = SolidColor(Seam),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, GridBold, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-            )
-        }
-
-        Spacer(Modifier.height(22.dp))
-        Label("SIZE   ${String.format(Locale.US, "%.2f", session.calib)}x")
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StepButton("−") { session.calib = (session.calib - 0.02f).coerceIn(0.70f, 1.40f) }
-            Spacer(Modifier.width(8.dp))
-            StepButton("100%") { session.calib = 1f }
-            Spacer(Modifier.width(8.dp))
-            StepButton("+") { session.calib = (session.calib + 0.02f).coerceIn(0.70f, 1.40f) }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        Label("PANEL GAP   ${mm(session.gapMm)} mm")
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StepButton("−") { session.setGap(session.gapMm - 0.5f) }
-            Spacer(Modifier.width(8.dp))
-            StepButton("0") { session.setGap(0f) }
-            Spacer(Modifier.width(8.dp))
-            StepButton("+") { session.setGap(session.gapMm + 0.5f) }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        Note(
-            "Measure the gap between the two lit screens with a ruler.\n" +
-                "Size only needs a change if the panels disagree."
-        )
     }
 }
 
 @Composable
-private fun Label(text: String) {
-    Text(text, color = Dim, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-    Spacer(Modifier.height(8.dp))
+private fun BarButton(label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    }
 }
 
 /**
- * The system photo picker. It needs no storage permission, and it gives back an
- * address we can read the clip from.
+ * The clip fills the span, and the surface shows only this phone's slice. That
+ * is the whole crop — see [videoTransform] for the maths.
  */
+@Composable
+private fun VideoSurface(session: Session) {
+    val world = session.world
+    val aspect = session.videoAspect
+    val gap = session.gapMm
+    var size by remember { mutableStateOf(IntSize.Zero) }
+
+    val transform = remember(gap, aspect, size, world.totalW, world.h, world.sliceX, world.sliceY) {
+        if (size.width == 0 || world.sliceW <= 0f || world.sliceH <= 0f) {
+            null
+        } else {
+            val v = viewportOf(world, size.width.toFloat(), size.height.toFloat())
+            videoTransform(
+                viewW = size.width.toFloat(), viewH = size.height.toFloat(),
+                u = v.u, totalW = world.totalW, h = world.h,
+                sliceX = world.sliceX, sliceY = world.sliceY,
+                padX = v.padX, padY = v.padY,
+                aspect = aspect, axis = world.axis,
+            )
+        }
+    }
+
+    AndroidView(
+        factory = { ctx ->
+            TextureView(ctx).apply {
+                session.player?.setVideoTextureView(this)
+                // The surface size is only known after layout, and nothing else
+                // here recomposes on its own. Without this the transform never
+                // gets a size and the video draws uncropped.
+                addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
+                    size = IntSize(r - l, b - t)
+                }
+            }
+        },
+        update = { tv ->
+            if (tv.width != size.width || tv.height != size.height) {
+                size = IntSize(tv.width, tv.height)
+            }
+            transform?.let { t ->
+                val m = Matrix()
+                m.setScale(t.scaleX, t.scaleY)
+                m.postTranslate(t.tx, t.ty)
+                tv.setTransform(m)
+            }
+        },
+        modifier = Modifier.fillMaxSize(),
+    )
+}
+
+/**
+ * The host renders the page once, at the size of the whole canvas, and shows
+ * its own half. It also crops the other half and streams it, so the viewer never
+ * lays the page out at all.
+ *
+ * That is why any page works here, and why a video on the page plays with sound:
+ * the host is an ordinary single browser on an ordinary single device.
+ */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun RemoteHostSurface(session: Session) {
+    val world = session.world
+    val density = LocalDensity.current.density
+    val calib = session.calib
+    val url = session.liveUrl
+
+    var web by remember { mutableStateOf<WebView?>(null) }
+    var mine by remember { mutableStateOf<ImageBitmap?>(null) }
+
+    // The page is laid out once, at the size of the whole canvas.
+    val fullW = (world.totalW * calib).dp
+    val fullH = (world.h * calib).dp
+    val layoutW = world.totalW
+
+    val cut = remember { FrameCutter() }
+
+    Box(Modifier.fillMaxSize().clipToBounds().background(Night)) {
+        AndroidView(
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.useWideViewPort = true
+                    settings.loadWithOverviewMode = true
+                    settings.builtInZoomControls = false
+                    settings.displayZoomControls = false
+                    settings.mediaPlaybackRequiresUserGesture = false
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(v: WebView, u: String) {
+                            // Pin the layout to the width of the whole canvas,
+                            // whatever viewport the page asked for. Without this
+                            // the page picks its own width and the two halves
+                            // stop agreeing.
+                            v.evaluateJavascript(
+                                "(function(){var m=document.querySelector('meta[name=viewport]');" +
+                                    "if(!m){m=document.createElement('meta');m.name='viewport';" +
+                                    "document.head.appendChild(m);}" +
+                                    "m.setAttribute('content','width=$layoutW, initial-scale=1');})()",
+                                null,
+                            )
+                        }
+                    }
+                    if (url.isNotEmpty()) loadUrl(url)
+                    web = this
+                }
+            },
+            update = { v -> if (url.isNotEmpty() && v.url != url) v.loadUrl(url) },
+            // requiredSize, not size: a plain size is clamped by the parent.
+            modifier = Modifier.requiredSize(fullW, fullH),
+        )
+
+        // Both halves are cut from one render, so they always agree. The WebView
+        // is never seen — this picture covers it.
+        mine?.let {
+            Image(it, null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
+        }
+    }
+
+    LaunchedEffect(url, fullW, fullH) {
+        var view: WebView? = null
+        while (isActive) {
+            delay(1000L / REMOTE_FPS)
+            // The factory above can run after this effect starts. Keep looking
+            // rather than giving up once.
+            if (view == null) view = web
+            val v = view ?: continue
+            if (v.width <= 0 || v.height <= 0) continue
+            // Drawing must happen on the main thread. Writing to a socket must
+            // not: Android stops the app for network work on the main thread.
+            val shot = withContext(Dispatchers.Main) { cut.capture(v, world, density * calib) }
+                ?: continue
+            mine = shot.mine.asImageBitmap()
+            if (shot.peer != null && session.streamer.connected) {
+                withContext(Dispatchers.IO) { session.streamer.send(shot.peer) }
+            }
+        }
+    }
+}
+
+/** One frame's two halves. */
+private class Shot(val mine: Bitmap, val peer: ByteArray?)
+
+/**
+ * Draws the page into one reused bitmap and cuts both slices out of it.
+ *
+ * The bitmaps are allocated once and drawn into again on each frame. Creating
+ * four-megapixel bitmaps ten times a second would bury the collector. Every
+ * call happens on the main thread, so the picture Compose draws is never
+ * modified while it is being drawn.
+ */
+private class FrameCutter {
+    private var full: Bitmap? = null
+    private var mine: Bitmap? = null
+    private var peer: Bitmap? = null
+
+    fun capture(view: WebView, world: World, u: Float): Shot? {
+        if (u <= 0f || world.peerW <= 0f || world.sliceW <= 0f) return null
+
+        val f = full?.takeIf { it.width == view.width && it.height == view.height }
+            ?: Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).also { full = it }
+        view.draw(Canvas(f))
+
+        val m = cut(f, mine, world.sliceX, world.sliceY, world.sliceW, world.sliceH, u) ?: return null
+        mine = m
+
+        val peerBytes = cut(f, peer, world.peerX, world.peerY, world.peerW, world.peerH, u)?.let { p ->
+            peer = p
+            ByteArrayOutputStream().also { p.compress(Bitmap.CompressFormat.JPEG, 65, it) }.toByteArray()
+        }
+        return Shot(m, peerBytes)
+    }
+
+    /** Cut one rectangle out of [src] into [into], reusing the buffer when it fits. */
+    private fun cut(
+        src: Bitmap, into: Bitmap?, x: Float, y: Float, w: Float, h: Float, u: Float,
+    ): Bitmap? {
+        val px = (x * u).toInt().coerceIn(0, src.width - 1)
+        val py = (y * u).toInt().coerceIn(0, src.height - 1)
+        val pw = (w * u).toInt().coerceIn(1, src.width - px)
+        val ph = (h * u).toInt().coerceIn(1, src.height - py)
+
+        val dst = if (into != null && into.width == pw && into.height == ph) {
+            into
+        } else {
+            Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
+        }
+        Canvas(dst).apply {
+            drawColor(android.graphics.Color.BLACK)
+            drawBitmap(src, -px.toFloat(), -py.toFloat(), null)
+        }
+        return dst
+    }
+}
+
+/**
+ * The viewer draws the frames the host sends. It holds no browser, so what it
+ * shows is exactly what the host laid out — the two halves cannot disagree.
+ */
+@Composable
+private fun RemoteViewerSurface(session: Session) {
+    val scope = rememberCoroutineScope()
+    val host = session.peerAddress
+    var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    var lost by remember { mutableStateOf(false) }
+
+    DisposableEffect(host) {
+        val client = FrameClient(scope)
+        if (host != null) {
+            client.connect(
+                host = host,
+                onFrame = { bytes ->
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null) {
+                        val image = bmp.asImageBitmap()
+                        scope.launch(Dispatchers.Main) {
+                            frame = image
+                            lost = false
+                        }
+                    }
+                },
+                onLost = { scope.launch(Dispatchers.Main) { lost = true } },
+            )
+        } else {
+            lost = true
+        }
+        onDispose { client.stop() }
+    }
+
+    Box(Modifier.fillMaxSize().background(Night), contentAlignment = Alignment.Center) {
+        val shown = frame
+        if (shown != null) {
+            // The frame is exactly this phone's slice, so it fills the screen.
+            Image(
+                bitmap = shown,
+                contentDescription = null,
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Text(
+                if (lost) "Waiting for the host" else "Connecting",
+                color = Color(0x99FFFFFF), fontSize = 14.sp,
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------- widgets
+
 @Composable
 private fun clipPicker(
     onPicked: (Uri, String) -> Unit,
@@ -274,425 +844,128 @@ private fun displayName(context: Context, uri: Uri): String {
     return uri.lastPathSegment ?: "clip"
 }
 
-/** A clip name short enough for a one-line label. */
-private fun shortName(name: String, max: Int = 26): String =
+private fun shortName(name: String, max: Int): String =
     if (name.length <= max) name else name.take(max - 1) + "…"
 
 @Composable
-private fun Note(text: String) {
-    Text(
-        text, color = Faint, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-        textAlign = TextAlign.Center, lineHeight = 14.sp,
-    )
-}
-
-@Composable
-private fun ModeButton(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .border(1.dp, if (selected) Seam else GridBold, RoundedCornerShape(8.dp))
-            .background(
-                if (selected) Seam.copy(alpha = 0.12f) else Color.Transparent,
-                RoundedCornerShape(8.dp),
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 9.dp),
-    ) {
-        Text(
-            label,
-            color = if (selected) Seam else Dim,
-            fontSize = 12.sp,
-            fontFamily = FontFamily.Monospace,
-        )
-    }
-}
-
-@Composable
-private fun StepButton(label: String, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .border(1.dp, GridBold, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 9.dp),
-    ) {
-        Text(label, color = Dim, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
-    }
-}
-
-// ---------------------------------------------------------------- waiting
-
-@Composable
-private fun WaitingScreen(session: Session) {
-    val dead = session.phase == Phase.Dead
-    // Walk the interfaces once, not on every recomposition.
-    val ip = remember { if (session.isHost) Link.localIp() else "" }
-
+private fun Panel(content: @Composable () -> Unit) {
     Column(
-        Modifier.fillMaxSize().padding(28.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        if (!dead) {
-            CircularProgressIndicator(color = Seam, strokeWidth = 2.dp)
-            Spacer(Modifier.height(28.dp))
-        }
-        Text(
-            if (dead) session.note else "waiting",
-            color = if (dead) BallColor else Dim, fontSize = 14.sp,
-            fontFamily = FontFamily.Monospace, textAlign = TextAlign.Center,
-        )
-        if (!dead && session.isHost) {
-            Spacer(Modifier.height(56.dp))
-            Text("host ip", color = Faint, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-            Spacer(Modifier.height(4.dp))
-            Text(ip, color = Dim, fontSize = 16.sp, fontFamily = FontFamily.Monospace)
-        }
-        Spacer(Modifier.height(52.dp))
-        StepButton("back") { session.reset() }
-    }
-}
-
-// ---------------------------------------------------------------- live
-
-@Composable
-private fun LiveCanvas(session: Session) {
-    val world = session.world
-    val density = LocalDensity.current.density
-    val videoMode = session.videoMode
-    val webMode = session.webMode
-
-    var ballX by remember { mutableFloatStateOf(0f) }
-    var ballY by remember { mutableFloatStateOf(0f) }
-
-    LaunchedEffect(Unit) {
-        var last = 0L
-        while (true) {
-            withFrameNanos { now ->
-                if (last != 0L) {
-                    session.tick(((now - last) / 1e9f).coerceIn(0f, 0.05f))
-                }
-                last = now
-                ballX = world.bx
-                ballY = world.by
-            }
-        }
-    }
-
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val padY = (maxHeight.value - world.h * session.calib) * density / 2f
-        val unitsPerPx = 1f / (density * session.calib)
-
-        // pointerInput(Unit) is installed once and never restarts, so it would keep
-        // the first composition's copy of the lambda. rememberUpdatedState makes the
-        // captured geometry track the current values instead of going stale.
-        val sendTouch by rememberUpdatedState<(Offset, Boolean) -> Unit> { p, down ->
-            session.touch(
-                world.sliceX + p.x * unitsPerPx,
-                (p.y - padY) * unitsPerPx,
-                down,
-            )
-        }
-
-        Box(Modifier.fillMaxSize()) {
-            when {
-                webMode -> WebSurface(session)
-                videoMode -> VideoSurface(session)
-            }
-
-            // The ball rides on top of the video. It does not ride on top of a web
-            // page: there the page needs every touch, and the page is the demo.
-            val gesture = if (webMode) Modifier
-            else Modifier.pointerInput(Unit) {
-                // requireUnconsumed is the default, so a touch that lands on the
-                // controls below never reaches the ball.
-                awaitPointerEventScope {
-                    while (true) {
-                        val down = awaitFirstDown()
-                        sendTouch(down.position, true)
-                        var last = down.position
-                        var pressed = true
-                        while (pressed) {
-                            val ev = awaitPointerEvent()
-                            val ch = ev.changes.firstOrNull { it.id == down.id }
-                            if (ch == null || !ch.pressed) {
-                                pressed = false
-                            } else {
-                                last = ch.position
-                                sendTouch(last, true)
-                                ch.consume()
-                            }
-                        }
-                        sendTouch(last, false)
-                    }
-                }
-            }
-
-            Canvas(Modifier.fillMaxSize().then(gesture)) {
-                val u = size.width / world.sliceW
-                val padPx = (size.height - world.h * u) / 2f
-
-                clipRect {
-                    translate(left = -world.sliceX * u, top = padPx) {
-                        if (!videoMode && !webMode) {
-                            var x = 0f
-                            while (x <= world.totalW) {
-                                val bold = x % 200f < 1f
-                                drawLine(
-                                    if (bold) GridBold else Grid,
-                                    Offset(x * u, 0f), Offset(x * u, world.h * u),
-                                    strokeWidth = if (bold) 2f else 1f,
-                                )
-                                x += 50f
-                            }
-                            var y = 0f
-                            while (y <= world.h) {
-                                val bold = y % 200f < 1f
-                                drawLine(
-                                    if (bold) GridBold else Grid,
-                                    Offset(0f, y * u), Offset(world.totalW * u, y * u),
-                                    strokeWidth = if (bold) 2f else 1f,
-                                )
-                                y += 50f
-                            }
-                        }
-
-                        // Sits on the seam, so it is drawn half here and half on the
-                        // neighbour. Turn the gap dial until the halves make one circle.
-                        if (!webMode) {
-                            val cx = world.totalW / 2f * u
-                            val cy = world.h / 2f * u
-                            drawCircle(
-                                if (videoMode) Color.White.copy(alpha = 0.5f) else GridBold,
-                                radius = 60f * u, center = Offset(cx, cy), style = Stroke(2f),
-                            )
-
-                            val c = Offset(ballX * u, ballY * u)
-                            drawCircle(BallColor.copy(alpha = 0.16f), radius = BALL_R * u * 2.2f, center = c)
-                            drawCircle(BallColor, radius = BALL_R * u, center = c)
-                        }
-                    }
-                }
-
-                // Mark this phone's inner edge so the physical bezel is accounted for.
-                val onLeft = world.sliceX == 0f
-                drawRect(
-                    Seam.copy(alpha = if (videoMode || webMode) 0.30f else 0.55f),
-                    topLeft = Offset(if (onLeft) size.width - 3f else 0f, padPx),
-                    size = Size(3f, world.h * u),
-                )
-            }
-
-            LiveControls(session)
-        }
-    }
-}
-
-/**
- * The clip fills the logical width, and the surface shows only this phone's
- * slice. That is the whole crop — see [videoTransform] for the maths.
- */
-@Composable
-private fun VideoSurface(session: Session) {
-    val world = session.world
-    val aspect = session.videoAspect
-    val gap = session.gapMm            // read so the transform follows the dial
-    var size by remember { mutableStateOf(IntSize.Zero) }
-
-    // Recompute only when something that moves the picture changes.
-    val transform = remember(gap, aspect, size, world.totalW, world.h, world.sliceX) {
-        if (size.width == 0 || world.sliceW <= 0f) {
-            null
-        } else {
-            val u = size.width / world.sliceW
-            val padY = (size.height - world.h * u) / 2f
-            videoTransform(
-                viewW = size.width.toFloat(), viewH = size.height.toFloat(),
-                u = u, totalW = world.totalW, h = world.h,
-                sliceX = world.sliceX, padY = padY, videoAspect = aspect,
-            )
-        }
-    }
-
-    AndroidView(
-        factory = { ctx ->
-            TextureView(ctx).apply {
-                session.player?.setVideoTextureView(this)
-                // The surface size is only known after layout, and nothing else
-                // here recomposes on its own. Without this the transform never
-                // gets a size and the video draws uncropped.
-                addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
-                    size = IntSize(r - l, b - t)
-                }
-            }
-        },
-        update = { tv ->
-            if (tv.width != size.width || tv.height != size.height) {
-                size = IntSize(tv.width, tv.height)
-            }
-            transform?.let { t ->
-                val m = Matrix()
-                m.setScale(t.scaleX, t.scaleY)
-                m.postTranslate(t.tx, t.ty)
-                tv.setTransform(m)
-            }
-        },
-        modifier = Modifier.fillMaxSize(),
-    )
-}
-
-/**
- * Both phones lay the page out at the same CSS width — the width of the whole
- * canvas. Each phone then zooms by its own calibration, so one CSS pixel is the
- * same physical size on both screens, and each scrolls to its own slice.
- *
- * If the two halves disagree, the page fought the viewport we injected. Try a
- * page with a plain layout.
- */
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun WebSurface(session: Session) {
-    val world = session.world
-    val calib = session.calib
-    val gap = session.gapMm
-    val url = session.liveUrl
-    val order = session.scrollCmd
-
-    var size by remember { mutableStateOf(IntSize.Zero) }
-    var view by remember { mutableStateOf<MeasurableWebView?>(null) }
-    var loaded by remember { mutableIntStateOf(0) }
-    var suppress by remember { mutableStateOf(false) }
-
-    AndroidView(
-        factory = { ctx ->
-            MeasurableWebView(ctx).apply {
-                settings.javaScriptEnabled = true
-                settings.useWideViewPort = true
-                settings.loadWithOverviewMode = false
-                settings.builtInZoomControls = false
-                settings.displayZoomControls = false
-
-                setOnScrollChangeListener { _, _, y, _, _ ->
-                    if (suppress) return@setOnScrollChangeListener
-                    val range = (computeVerticalScrollRange() - height).coerceAtLeast(1)
-                    session.sendScroll(y.toFloat() / range)
-                }
-
-                // Same reason as the video surface: nothing else here recomposes,
-                // so the size must come from a layout callback or it stays zero
-                // and the scroll is never applied.
-                addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
-                    size = IntSize(r - l, b - t)
-                }
-
-                webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(v: WebView, u: String) {
-                        // Pin the layout to the full canvas width, identically on
-                        // both phones, then let calibration set the physical size.
-                        val w = world.totalW
-                        val c = session.calib
-                        v.evaluateJavascript(
-                            "(function(){" +
-                                "var m=document.querySelector('meta[name=viewport]');" +
-                                "if(!m){m=document.createElement('meta');m.name='viewport';" +
-                                "document.head.appendChild(m);}" +
-                                "m.setAttribute('content','width=" + w + ", initial-scale=" + c + "');" +
-                                "})()",
-                            null,
-                        )
-                        loaded++
-                    }
-                }
-                if (url.isNotEmpty()) loadUrl(url)
-                view = this
-            }
-        },
-        update = { v -> if (url.isNotEmpty() && v.url != url) v.loadUrl(url) },
-        modifier = Modifier.fillMaxSize(),
-    )
-
-    // Place the window on this phone's slice, and follow the other phone's scroll.
-    LaunchedEffect(url, gap, size, loaded, order) {
-        val v = view ?: return@LaunchedEffect
-        if (size.width == 0 || world.totalW <= 0f) return@LaunchedEffect
-        val hRange = v.computeHorizontalScrollRange().toFloat()
-        val x = if (hRange > 0f) (world.sliceX / world.totalW * hRange).toInt() else 0
-        val vRange = (v.computeVerticalScrollRange() - size.height).coerceAtLeast(1)
-        val f = order?.fraction
-        val y = if (f != null && f >= 0f) (f * vRange).toInt() else v.scrollY
-        suppress = true
-        v.scrollTo(x, y)
-        v.post { suppress = false }
-    }
+        Modifier
+            .fillMaxWidth()
+            .shadow(2.dp, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(16.dp))
+            .background(CardBg)
+            .border(1.dp, Line, RoundedCornerShape(16.dp))
+            .padding(16.dp),
+    ) { content() }
 }
 
 @Composable
-private fun LiveControls(session: Session) {
-    val pick = clipPicker { uri, name -> session.pickClip(uri, name) }
-
-    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (session.isHost) {
-                StepButton("gap −") { session.setGap(session.gapMm - 0.5f) }
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    mm(session.gapMm),
-                    color = Dim, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
-                )
-                Spacer(Modifier.width(8.dp))
-                StepButton("gap +") { session.setGap(session.gapMm + 0.5f) }
-                Spacer(Modifier.width(14.dp))
-            }
-            // Either phone can take over the clip while the app runs.
-            StepButton(if (session.myClip == null) "PICK" else "CHANGE") {
-                pick.launch(pickerRequest())
-            }
-            if (session.videoMode && session.isHost) {
-                Spacer(Modifier.width(8.dp))
-                StepButton(if (session.playing) "❚❚" else "▶") { session.togglePlay() }
-            }
-        }
-        if (session.videoMode && session.clipName.isNotEmpty()) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                (if (session.source == Source.Me) "serving · " else "streaming · ") +
-                    shortName(session.clipName, 40),
-                color = Faint,
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
+private fun SectionTitle(text: String) {
+    Text(text, fontSize = 17.sp, color = Ink, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(12.dp))
 }
 
-// ---------------------------------------------------------------- widgets
-
 @Composable
-private fun DuoButton(label: String, primary: Boolean, onClick: () -> Unit) {
+private fun BigButton(label: String, primary: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(54.dp)
-            .border(1.dp, if (primary) Seam else GridBold, RoundedCornerShape(12.dp))
-            .background(
-                if (primary) Seam.copy(alpha = 0.10f) else Color.Transparent,
-                RoundedCornerShape(12.dp),
-            )
+            .height(50.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (primary) Accent else Color.Transparent)
+            .border(1.dp, if (primary) Accent else Line, RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             label,
-            color = if (primary) Seam else Dim,
+            color = if (primary) Color.White else Ink,
             fontSize = 15.sp,
-            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold,
         )
+    }
+}
+
+@Composable
+private fun SmallButton(label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(AccentSoft)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    ) {
+        Text(label, color = Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFFF2F2F2))
+            .padding(3.dp),
+    ) {
+        options.forEachIndexed { i, label ->
+            val on = i == selected
+            Box(
+                Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (on) CardBg else Color.Transparent)
+                    .clickable { onSelect(i) }
+                    .padding(vertical = 9.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    color = if (on) Ink else Sub,
+                    fontSize = 13.sp,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StepperRow(
+    label: String,
+    value: String,
+    onMinus: () -> Unit,
+    onPlus: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 14.sp, color = Ink, modifier = Modifier.weight(1f))
+        StepChip("−", onMinus)
+        Text(
+            value,
+            fontSize = 14.sp,
+            color = Ink,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(74.dp),
+        )
+        StepChip("+", onPlus)
+    }
+}
+
+@Composable
+private fun StepChip(label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .width(38.dp)
+            .height(38.dp)
+            .clip(RoundedCornerShape(19.dp))
+            .border(1.dp, Line, RoundedCornerShape(19.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = Ink, fontSize = 17.sp)
     }
 }

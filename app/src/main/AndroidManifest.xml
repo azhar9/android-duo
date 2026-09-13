@@ -20,8 +20,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density"
-            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|smallestScreenSize"
             android:theme="@style/Theme.Duo">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

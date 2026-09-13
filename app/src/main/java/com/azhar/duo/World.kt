@@ -14,12 +14,17 @@ private const val FRICTION = 1.1f      // velocity decay per second
 private const val BOUNCE = 0.93f       // energy kept off a wall
 private const val MAX_SPEED = 3000f    // logical units per second
 
+/** Which way the two phones are laid out. */
+enum class Axis { Horizontal, Vertical }
+
 /**
  * The single logical canvas that both phones are halves of.
  *
  * Units are dp, so a shape comes out the same physical size on both phones with
- * no calibration maths — that is the whole trick. Origin is the top-left of the
- * combined screen; the vertical band is centred on the shorter phone.
+ * no calibration maths — that is the whole trick. [Axis] decides whether the
+ * phones sit side by side or one above the other; everything else follows from
+ * that. A landscape video wants the phones stacked, a portrait video wants them
+ * side by side.
  *
  * The two screens do not touch. A real gap sits between them, and the bezels
  * hide that band of the canvas. [setGapMm] records the width of that band, so
@@ -30,12 +35,15 @@ private const val MAX_SPEED = 3000f    // logical units per second
  */
 class World {
 
+    var axis = Axis.Horizontal; private set
     var totalW = 0f; private set
     var h = 0f; private set
 
-    /** This device's horizontal slice of the logical canvas. */
+    /** This device's slice of the logical canvas. */
     var sliceX = 0f; private set
+    var sliceY = 0f; private set
     var sliceW = 0f; private set
+    var sliceH = 0f; private set
 
     /** The band between the two screens. No phone draws this part. */
     var gap = 0f; private set
@@ -50,7 +58,7 @@ class World {
     private var ah = 0f
     private var bw = 0f
     private var bh = 0f
-    private var amLeft = true
+    private var amFirst = true
     private var laid = false
 
     private var dragging = false
@@ -59,11 +67,14 @@ class World {
     private var lastT = 0L
 
     /**
-     * Both devices call this with the same four numbers and their own side, so
-     * both derive identical geometry without trading a layout.
+     * Both devices call this with the same four numbers, the same axis, and their
+     * own position, so both derive identical geometry without trading a layout.
      */
-    fun layout(aW: Float, aH: Float, bW: Float, bH: Float, amLeft: Boolean) {
-        aw = aW; ah = aH; bw = bW; bh = bH; this.amLeft = amLeft; laid = true
+    fun layout(aW: Float, aH: Float, bW: Float, bH: Float, first: Boolean, axis: Axis) {
+        aw = aW; ah = aH; bw = bW; bh = bH
+        amFirst = first
+        this.axis = axis
+        laid = true
         recompute()
     }
 
@@ -73,15 +84,61 @@ class World {
         recompute()
     }
 
+    /** Turn the pair side by side or stacked, keeping the same screens and gap. */
+    fun setAxis(a: Axis) {
+        axis = a
+        recompute()
+    }
+
     private fun recompute() {
         if (!laid) return
-        h = min(ah, bh)
-        totalW = aw + gap + bw
-        sliceX = if (amLeft) 0f else aw + gap
-        sliceW = if (amLeft) aw else bw
+        when (axis) {
+            Axis.Horizontal -> {
+                totalW = aw + gap + bw
+                h = min(ah, bh)
+                sliceW = if (amFirst) aw else bw
+                sliceX = if (amFirst) 0f else aw + gap
+                sliceH = h
+                sliceY = 0f
+            }
+            Axis.Vertical -> {
+                totalW = min(aw, bw)
+                h = ah + gap + bh
+                sliceH = if (amFirst) ah else bh
+                sliceY = if (amFirst) 0f else ah + gap
+                sliceW = totalW
+                sliceX = 0f
+            }
+        }
         bx = clampX(bx)
         by = clampY(by)
     }
+
+    // The other phone's slice. The host needs it to crop the picture it streams.
+
+    val peerX: Float
+        get() = when (axis) {
+            Axis.Horizontal -> if (sliceX == 0f) sliceX + sliceW + gap else 0f
+            Axis.Vertical -> 0f
+        }
+
+    val peerY: Float
+        get() = when (axis) {
+            Axis.Horizontal -> 0f
+            Axis.Vertical -> if (sliceY == 0f) sliceY + sliceH + gap else 0f
+        }
+
+    val peerW: Float
+        get() = when (axis) {
+            Axis.Horizontal -> totalW - gap - sliceW
+            Axis.Vertical -> totalW
+        }
+
+    val peerH: Float
+        get() = when (axis) {
+            Axis.Horizontal -> h
+            Axis.Vertical -> h - gap - sliceH
+        }
 
     fun place(x: Float, y: Float) { bx = clampX(x); by = clampY(y) }
 
@@ -144,12 +201,12 @@ class World {
 }
 
 /**
- * How to place a video inside a full-screen surface, so that this phone shows
+ * How to place a picture inside a full-screen surface, so that this phone shows
  * its own slice of the canvas and nothing else.
  *
- * The video always fills the full logical width. That is what makes the picture
- * continuous across the join, and it is why the band behind the bezels comes
- * out of the video rather than out of the geometry.
+ * The picture always fills the full span. That is what makes it continuous
+ * across the join, and it is why the band behind the bezels comes out of the
+ * picture rather than out of the geometry.
  */
 data class VideoTransform(
     val scaleX: Float,
@@ -160,11 +217,11 @@ data class VideoTransform(
 
 /**
  * [viewW],[viewH] is the surface size in px. [u] is px for each logical unit.
- * [padY] is the top of the logical band inside the surface. [videoAspect] is
- * width divided by height.
+ * [padX],[padY] place the logical rectangle inside the surface. [aspect] is the
+ * picture width divided by its height.
  *
- * A video that fills the width without filling the height is centred, so it is
- * letterboxed. A tall video overflows top and bottom, so it is cropped.
+ * A picture that fills the span without filling the cross axis is centred, so it
+ * is letterboxed. One that overflows the cross axis is cropped.
  */
 fun videoTransform(
     viewW: Float,
@@ -173,15 +230,30 @@ fun videoTransform(
     totalW: Float,
     h: Float,
     sliceX: Float,
+    sliceY: Float,
+    padX: Float,
     padY: Float,
-    videoAspect: Float,
-): VideoTransform {
-    val tw = totalW * u
-    val th = tw / videoAspect
-    return VideoTransform(
-        scaleX = tw / viewW,
-        scaleY = th / viewH,
-        tx = -sliceX * u,
-        ty = padY + (h * u - th) / 2f,
-    )
+    aspect: Float,
+    axis: Axis,
+): VideoTransform = when (axis) {
+    Axis.Horizontal -> {
+        val tw = totalW * u
+        val th = tw / aspect
+        VideoTransform(
+            scaleX = tw / viewW,
+            scaleY = th / viewH,
+            tx = -sliceX * u,
+            ty = padY + (h * u - th) / 2f,
+        )
+    }
+    Axis.Vertical -> {
+        val th = h * u
+        val tw = th * aspect
+        VideoTransform(
+            scaleX = tw / viewW,
+            scaleY = th / viewH,
+            tx = padX + (totalW * u - tw) / 2f,
+            ty = -sliceY * u,
+        )
+    }
 }
