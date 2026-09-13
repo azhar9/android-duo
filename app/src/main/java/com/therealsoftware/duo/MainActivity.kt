@@ -607,7 +607,9 @@ private fun LiveScreen(session: Session) {
                         }
 
                         // Sits on the seam, drawn half here and half on the neighbour.
-                        if (!session.webMode && !session.pictureMode) {
+                        // The ball is for the test screen. Over a film or a
+                        // page it reads as a fault, so it stays behind.
+                        if (!session.webMode && !session.pictureMode && !session.videoMode) {
                             val cx = world.totalW / 2f * u
                             val cy = world.h / 2f * u
                             drawCircle(

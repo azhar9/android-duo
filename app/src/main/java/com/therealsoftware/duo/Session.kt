@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -27,11 +28,21 @@ enum class Mode { Canvas, Video, Web, Picture }
 /** Which phone holds the clip. The geometry role and the media role are separate. */
 enum class Source { None, Me, Peer }
 
-/** Jump to the host position when the two players drift further apart than this. */
-private const val SYNC_TOLERANCE_MS = 200L
+/**
+ * How far the client may drift before it is pulled back.
+ *
+ * This was 200 ms, and it made the picture stutter. A client that is buffering
+ * a little sits permanently outside 200 ms, so it was yanked back to the host
+ * twice a second. Half a second is invisible to a viewer and gives the player
+ * room to breathe.
+ */
+private const val SYNC_TOLERANCE_MS = 500L
 
 /** How often the host tells the client where it is. */
-private const val SYNC_INTERVAL_MS = 400L
+private const val SYNC_INTERVAL_MS = 500L
+
+/** Drift has to be seen this many times running before the player jumps. */
+private const val SYNC_STRIKES = 2
 
 const val DEFAULT_URL = "https://www.google.com"
 
@@ -141,6 +152,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
     private var myW = 0f
     private var myH = 0f
     private var lastSync = 0L
+    private var driftStrikes = 0
 
     init {
         wire()
@@ -517,7 +529,11 @@ class Session(private val scope: CoroutineScope, context: Context) {
         }
     }
 
-    /** The client takes the host's play state, and seeks only if it has drifted. */
+    /**
+     * The client takes the host's play state, and corrects its own position only
+     * when it has drifted for a while. A single bad reading during a buffer
+     * refill is not a reason to jump.
+     */
     private fun followHost(j: JSONObject) {
         val p = player ?: return
         val pos = j.optLong("p")
@@ -525,7 +541,15 @@ class Session(private val scope: CoroutineScope, context: Context) {
         if (playing != p.isPlaying) {
             if (playing) p.play() else p.pause()
         }
-        if (abs(p.currentPosition - pos) > SYNC_TOLERANCE_MS) p.seekTo(pos)
+        if (abs(p.currentPosition - pos) > SYNC_TOLERANCE_MS) {
+            driftStrikes++
+            if (driftStrikes >= SYNC_STRIKES) {
+                driftStrikes = 0
+                p.seekTo(pos)
+            }
+        } else {
+            driftStrikes = 0
+        }
     }
 
     private fun myPicturePicked() = pictureUri != null
@@ -568,7 +592,14 @@ class Session(private val scope: CoroutineScope, context: Context) {
             Source.None -> null
         } ?: return
 
-        player = ExoPlayer.Builder(appContext).build().apply {
+        // More slack than the default. The client is reading the file over the
+        // network rather than from disk, and the default buffer is tuned for a
+        // file that is already here.
+        val buffer = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(8000, 40000, 2000, 5000)
+            .build()
+
+        player = ExoPlayer.Builder(appContext).setLoadControl(buffer).build().apply {
             repeatMode = Player.REPEAT_MODE_ALL
             setMediaItem(item)
             // Only the phone that holds the clip makes sound. Two phones in one
