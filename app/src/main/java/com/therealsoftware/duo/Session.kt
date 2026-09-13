@@ -116,9 +116,12 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
     val world = World()
 
+    /** What this pair worked out last time. Read once, written as it changes. */
+    private val settings = Settings(appContext)
+
     /** Which set of ports this pair uses. Lets several pairs share one network. */
-    var channel by mutableIntStateOf(0)
-    var ports = Ports(0)
+    var channel by mutableIntStateOf(settings.channel)
+    var ports = Ports(settings.channel)
         private set
 
     private var media = MediaServer(appContext, scope, ports)
@@ -136,13 +139,15 @@ class Session(private val scope: CoroutineScope, context: Context) {
      * content renders larger. Both phones must agree by eye — OEMs report dp
      * densities that don't match the real panel, and MIUI lets the user change it.
      */
-    var calib by mutableFloatStateOf(1f)
+    var calib by mutableFloatStateOf(settings.calib)
+        private set
 
     /** Physical gap between the two panels, in millimetres. The host owns this. */
-    var gapMm by mutableFloatStateOf(3f)
+    var gapMm by mutableFloatStateOf(settings.gapMm)
+        private set
 
     /** Side by side, or one above the other. The host owns this. */
-    var axis by mutableStateOf(Axis.Horizontal); private set
+    var axis by mutableStateOf(settings.axis); private set
 
     // --- menu choices, host only. liveMode is what actually runs. ---
     var mode by mutableStateOf(Mode.Video)
@@ -254,6 +259,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
     fun chooseChannel(n: Int) {
         if (phase == Phase.Live || phase == Phase.Waiting) return
         channel = n.coerceIn(0, MAX_CHANNEL)
+        settings.channel = channel
         ports = Ports(channel)
         media = MediaServer(appContext, scope, ports)
         streamer = FrameServer(scope, ports)
@@ -351,15 +357,28 @@ class Session(private val scope: CoroutineScope, context: Context) {
     /** Set the gap. The host tells the client; both then use one value. */
     fun setGap(mm: Float) {
         gapMm = mm.coerceIn(0f, 20f)
+        settings.gapMm = gapMm
         world.setGapMm(gapMm)
         if (isHost && phase == Phase.Live) {
             link.send(JSONObject().put("t", "gap").put("mm", gapMm.toDouble()))
         }
     }
 
+    /** How large this phone draws its half of the canvas.
+     *
+     * This phone's own setting, and the other phone is not told: the size is
+     * what each phone has to correct for its own panel. It is worked out again
+     * when a session starts, so a change here shows at the next start.
+     */
+    fun changeCalib(v: Float) {
+        calib = v.coerceIn(0.70f, 1.40f)
+        settings.calib = calib
+    }
+
     /** Side by side, or stacked. The host tells the client. */
     fun chooseAxis(a: Axis) {
         axis = a
+        settings.axis = a
         if (phase != Phase.Live) return
         world.setAxis(a)
         world.place(world.totalW / 2f, world.h / 2f)
@@ -626,15 +645,10 @@ class Session(private val scope: CoroutineScope, context: Context) {
                 }
             }
 
-            "gap" -> if (!isHost) {
-                gapMm = j.optDouble("mm", 0.0).toFloat().coerceIn(0f, 20f)
-                world.setGapMm(gapMm)
-            }
+            "gap" -> if (!isHost) setGap(j.optDouble("mm", 0.0).toFloat())
 
             "axis" -> if (!isHost) {
-                axis = if (j.optString("a") == "Vertical") Axis.Vertical else Axis.Horizontal
-                world.setAxis(axis)
-                world.place(world.totalW / 2f, world.h / 2f)
+                chooseAxis(if (j.optString("a") == "Vertical") Axis.Vertical else Axis.Horizontal)
             }
 
             "refuse" -> if (!isHost) {

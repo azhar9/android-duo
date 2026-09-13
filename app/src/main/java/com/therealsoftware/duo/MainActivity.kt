@@ -389,8 +389,8 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
             StepperRow(
                 label = "Match the other screen",
                 value = pct(session.calib),
-                onMinus = { session.calib = (session.calib - 0.02f).coerceIn(0.70f, 1.40f) },
-                onPlus = { session.calib = (session.calib + 0.02f).coerceIn(0.70f, 1.40f) },
+                onMinus = { session.changeCalib(session.calib - 0.02f) },
+                onPlus = { session.changeCalib(session.calib + 0.02f) },
             )
             Spacer(Modifier.height(4.dp))
             Text(
@@ -754,7 +754,7 @@ private fun LiveBar(session: Session, web: WebView?, modifier: Modifier = Modifi
             }
             // One name, because it does one job. It used to say "Swap", which
             // reads as swapping between the phones and swaps nothing.
-            BarButton(if (session.myClip == null) "Clip" else "Change clip") {
+            BarButton(if (session.myClip == null) "Choose video" else "Change video") {
                 pick.launch(pickerRequest())
             }
         }
