@@ -2,6 +2,8 @@
 
 Two Android phones act as one screen. A fun little project.
 
+[![CI](https://github.com/azhar9/android-duo/actions/workflows/ci.yml/badge.svg)](https://github.com/azhar9/android-duo/actions/workflows/ci.yml)
+
 ![Two phones, one canvas](docs/icon.png)
 
 ## What this app does
@@ -58,6 +60,22 @@ Run the unit tests:
 ```
 ./gradlew :app:testDebugUnitTest
 ```
+
+## Build a release
+
+```
+./gradlew :app:bundleRelease
+```
+
+The bundle lands at `app/build/outputs/bundle/release/app-release.aab`. That is
+the file Google Play wants.
+
+Signing details live in `keystore.properties`, which is not in the repository.
+Copy `keystore.properties.example` and fill it in. The whole publishing process,
+including the Play Console forms, is written out in [PLAYSTORE.md](PLAYSTORE.md).
+
+Tagging a commit (`git tag v1.0.0 && git push origin v1.0.0`) builds a signed
+bundle on GitHub Actions. See [.github/workflows/release.yml](.github/workflows/release.yml).
 
 ## Install the app
 
@@ -259,7 +277,7 @@ local network is a few milliseconds. The user does not see this delay.
 ### The files
 
 ```
-app/src/main/java/com/azhar/duo/
+app/src/main/java/com/therealsoftware/duo/
   World.kt         The canvas, the axis, the gap, the crop maths, and the ball.
   Link.kt          The discovery and the network connection.
   MediaServer.kt   Serves the picked clip to the other phone over HTTP.
@@ -267,7 +285,7 @@ app/src/main/java/com/azhar/duo/
   Stream.kt        Sends the rendered page to the other phone as frames.
   Session.kt       The connection between the network, the media, and the canvas.
   MainActivity.kt  The user interface, the video surface, and the web surfaces.
-app/src/test/java/com/azhar/duo/
+app/src/test/java/com/therealsoftware/duo/
   WorldTest.kt     Thirty tests for the geometry and the physics.
   RangeTest.kt     Thirteen tests for byte ranges.
   StreamTest.kt    Ten tests for the frame protocol.
@@ -380,6 +398,18 @@ fault, and the same correction.
   several times over and make the text sharper.
 - Show a different source on each phone, and move an object between them.
 
+## Documents
+
+| | |
+|---|---|
+| [PRIVACY.md](PRIVACY.md) | What the app does with your data. It collects none. |
+| [TERMS.md](TERMS.md) | Terms of use. |
+| [NOTICE](NOTICE) | Every third-party library, and its licence. |
+| [PLAYSTORE.md](PLAYSTORE.md) | How to publish it. |
+
+The same credits are in the app, under **Licences and credits** on the setup
+screen.
+
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).

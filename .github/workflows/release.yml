@@ -1,0 +1,76 @@
+name: Release
+
+# Tag a commit to build a signed bundle:
+#
+#   git tag v1.0.0
+#   git push origin v1.0.0
+#
+# The bundle that comes out is what you upload to Google Play. It is not
+# uploaded for you — that step needs your Play credentials, and it is better to
+# do it by hand until you trust the pipeline.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    name: Build a signed bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # The keystore arrives as a base64 secret and is written to a file that
+      # exists only for the length of this job. The runner is thrown away
+      # afterwards, but the cleanup step below makes that explicit.
+      - name: Write the signing file
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::No KEYSTORE_BASE64 secret. See PLAYSTORE.md."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > duo-release.jks
+          {
+            echo "storeFile=duo-release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+
+      - name: Tests
+        run: ./gradlew :app:testDebugUnitTest
+
+      - name: Build the release bundle
+        run: ./gradlew :app:bundleRelease
+
+      - name: Check the bundle is signed
+        run: |
+          AAB=$(ls app/build/outputs/bundle/release/*.aab | head -1)
+          echo "built $AAB"
+          ls -la "$AAB"
+
+      - name: Keep the bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: duo-release-aab
+          path: app/build/outputs/bundle/release/*.aab
+
+      - name: Remove the signing file
+        if: always()
+        run: rm -f duo-release.jks keystore.properties

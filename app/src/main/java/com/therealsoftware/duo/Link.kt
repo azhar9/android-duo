@@ -1,4 +1,4 @@
-package com.azhar.duo
+package com.therealsoftware.duo
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

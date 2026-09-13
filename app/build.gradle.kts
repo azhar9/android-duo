@@ -1,15 +1,30 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+/**
+ * The signing details live outside the repository, in keystore.properties. That
+ * file is ignored by Git and must never be committed — anyone who has it can
+ * publish an update that your users will accept as yours.
+ *
+ * See keystore.properties.example for the shape of it.
+ */
+val keystoreFile = rootProject.file("keystore.properties")
+val keystore = Properties().apply {
+    if (keystoreFile.exists()) keystoreFile.inputStream().use { load(it) }
+}
+val canSign = keystore.getProperty("storeFile") != null
+
 android {
-    namespace = "com.azhar.duo"
+    namespace = "com.therealsoftware.duo"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.azhar.duo"
+        applicationId = "com.therealsoftware.duo"
         // The code itself is clean down to API 23 (Android 6). We claim 26,
         // because adaptive icons and a modern WebView start there. Anything
         // below Android 13 has never been run — test before trusting it.
@@ -28,8 +43,31 @@ android {
 
     kotlinOptions { jvmTarget = "17" }
 
+    signingConfigs {
+        if (canSign) {
+            create("release") {
+                storeFile = rootProject.file(keystore.getProperty("storeFile"))
+                storePassword = keystore.getProperty("storePassword")
+                keyAlias = keystore.getProperty("keyAlias")
+                keyPassword = keystore.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
-        release { isMinifyEnabled = false }
+        release {
+            // Shrinking is off on purpose. It would cut the download, but a
+            // release-only crash is the worst kind to find, and this code has
+            // only ever run with it off. Turn it on, then install the release
+            // build on a phone and check every mode before you ship it.
+            isMinifyEnabled = false
+            isShrinkResources = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            signingConfig = signingConfigs.findByName("release")
+        }
     }
 }
 

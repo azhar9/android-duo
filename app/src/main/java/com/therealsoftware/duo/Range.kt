@@ -1,4 +1,4 @@
-package com.azhar.duo
+package com.therealsoftware.duo
 
 /**
  * A byte range for an HTTP request. Both ends are inclusive, as the header

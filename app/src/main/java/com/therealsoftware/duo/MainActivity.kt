@@ -1,4 +1,4 @@
-package com.azhar.duo
+package com.therealsoftware.duo
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -164,6 +164,12 @@ fun DuoApp() {
 
 @Composable
 private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
+    var showLicences by remember { mutableStateOf(false) }
+    if (showLicences) {
+        LicencesScreen(onBack = { showLicences = false })
+        return
+    }
+
     val pick = clipPicker { uri, name -> session.pickClip(uri, name) }
 
     Column(
@@ -172,22 +178,22 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 28.dp),
     ) {
-        Text("Duo", fontSize = 40.sp, color = Ink, fontWeight = FontWeight.Bold)
+        Text("Duo", fontSize = 44.sp, color = Ink, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
             "Two phones, one big screen.",
-            fontSize = 15.sp, color = Sub,
+            fontSize = 17.sp, color = Sub,
         )
 
         Spacer(Modifier.height(24.dp))
 
         // --- connect ---
         Panel {
-            Text("Start a session", fontSize = 17.sp, color = Ink, fontWeight = FontWeight.SemiBold)
+            Text("Start a session", fontSize = 20.sp, color = Ink, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(4.dp))
             Text(
                 "Both phones must be on the same WiFi. One can share a hotspot.",
-                fontSize = 13.sp, color = Sub, lineHeight = 18.sp,
+                fontSize = 15.sp, color = Sub, lineHeight = 18.sp,
             )
             Spacer(Modifier.height(16.dp))
             BigButton("Be the host", primary = true) { session.startHost(wDp, hDp) }
@@ -223,7 +229,7 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
                             Text(
                                 session.myClip?.let { shortName(session.clipName, 24) }
                                     ?: "No clip on this phone",
-                                fontSize = 14.sp,
+                                fontSize = 16.sp,
                                 color = if (session.myClip == null) Sub else Ink,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -231,7 +237,7 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
                             Spacer(Modifier.height(2.dp))
                             Text(
                                 "Choose one here, or on the other phone.",
-                                fontSize = 12.sp, color = Sub,
+                                fontSize = 14.sp, color = Sub,
                             )
                         }
                         Spacer(Modifier.width(12.dp))
@@ -241,13 +247,13 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
                     }
                 }
                 Mode.Web -> {
-                    Text("Address", fontSize = 13.sp, color = Sub)
+                    Text("Address", fontSize = 15.sp, color = Sub)
                     Spacer(Modifier.height(6.dp))
                     BasicTextField(
                         value = session.url,
                         onValueChange = { session.url = it },
                         singleLine = true,
-                        textStyle = TextStyle(color = Ink, fontSize = 14.sp),
+                        textStyle = TextStyle(color = Ink, fontSize = 16.sp),
                         cursorBrush = SolidColor(Accent),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -259,14 +265,14 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         "The host renders the page and streams it. Both phones show one half.",
-                        fontSize = 12.sp, color = Sub, lineHeight = 16.sp,
+                        fontSize = 14.sp, color = Sub, lineHeight = 16.sp,
                     )
                 }
                 Mode.Canvas -> {
                     Text(
                         "A grid and a ball. Use it to line the two screens up, and to " +
                             "check the gap.",
-                        fontSize = 13.sp, color = Sub, lineHeight = 18.sp,
+                        fontSize = 15.sp, color = Sub, lineHeight = 18.sp,
                     )
                 }
             }
@@ -293,7 +299,7 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
             Text(
                 "Measure the lit screens with a ruler. A wide video suits side by side; " +
                     "a tall one suits stacked.",
-                fontSize = 12.sp, color = Sub, lineHeight = 16.sp,
+                fontSize = 14.sp, color = Sub, lineHeight = 16.sp,
             )
         }
 
@@ -312,11 +318,80 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
             Text(
                 "Change this only when a grid square is a different size on the two " +
                     "screens. Set it before you start.",
-                fontSize = 12.sp, color = Sub, lineHeight = 16.sp,
+                fontSize = 14.sp, color = Sub, lineHeight = 16.sp,
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+        Box(
+            Modifier.fillMaxWidth().clickable { showLicences = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "Licences and credits",
+                fontSize = 15.sp, color = Accent, fontWeight = FontWeight.Medium,
             )
         }
 
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** What the app is built on. Required reading on Google Play, useful anyway. */
+private val LICENCES = listOf(
+    "AndroidX — Jetpack Compose" to
+        "Draws the interface, the grid, and the control bar. Apache License 2.0. " +
+        "Copyright the Android Open Source Project.",
+    "AndroidX — Activity and Core" to
+        "The back gesture, the app lifecycle, and Android's photo picker. " +
+        "Apache License 2.0.",
+    "AndroidX Media3 — ExoPlayer" to
+        "Plays the video, seeks to byte ranges, and follows the playback clock. " +
+        "Apache License 2.0.",
+    "Kotlin and kotlinx.coroutines" to
+        "The language, and the coroutines that carry the network work. " +
+        "Apache License 2.0. Copyright JetBrains s.r.o.",
+)
+
+@Composable
+private fun LicencesScreen(onBack: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 24.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SmallButton("Back") { onBack() }
+            Spacer(Modifier.width(14.dp))
+            Text("Licences", fontSize = 28.sp, color = Ink, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "Duo is MIT licensed. It is built on other people's work, and this is " +
+                "the list.",
+            fontSize = 16.sp, color = Sub, lineHeight = 24.sp,
+        )
+        Spacer(Modifier.height(18.dp))
+
+        LICENCES.forEach { (name, detail) ->
+            Panel {
+                Text(name, fontSize = 17.sp, color = Ink, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(5.dp))
+                Text(detail, fontSize = 15.sp, color = Sub, lineHeight = 18.sp)
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "The full text of every licence, and the full list including the " +
+                "build tools, is in the NOTICE file at " +
+                "github.com/azhar9/android-duo.",
+            fontSize = 14.sp, color = Sub, lineHeight = 20.sp,
+        )
+        Spacer(Modifier.height(28.dp))
     }
 }
 
@@ -335,18 +410,18 @@ private fun WaitingScreen(session: Session) {
         if (!dead) {
             CircularProgressIndicator(color = Accent, strokeWidth = 3.dp)
             Spacer(Modifier.height(24.dp))
-            Text("Looking for the other phone", fontSize = 17.sp, color = Ink)
+            Text("Looking for the other phone", fontSize = 20.sp, color = Ink)
             if (session.isHost) {
                 Spacer(Modifier.height(28.dp))
-                Text("This phone's address", fontSize = 13.sp, color = Sub)
+                Text("This phone's address", fontSize = 15.sp, color = Sub)
                 Spacer(Modifier.height(4.dp))
-                Text(ip, fontSize = 20.sp, color = Ink, fontWeight = FontWeight.Medium)
+                Text(ip, fontSize = 24.sp, color = Ink, fontWeight = FontWeight.Medium)
             }
         } else {
-            Text("Disconnected", fontSize = 20.sp, color = Ink, fontWeight = FontWeight.SemiBold)
+            Text("Disconnected", fontSize = 24.sp, color = Ink, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
             Text(
-                session.note, fontSize = 14.sp, color = Sub, textAlign = TextAlign.Center,
+                session.note, fontSize = 16.sp, color = Sub, textAlign = TextAlign.Center,
             )
         }
         Spacer(Modifier.height(36.dp))
@@ -515,7 +590,7 @@ private fun LiveBar(session: Session, modifier: Modifier = Modifier) {
                 BarButton("−") { session.setGap(session.gapMm - 0.5f) }
                 Text(
                     "${mm(session.gapMm)}",
-                    color = Color.White, fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                    color = Color.White, fontSize = 14.sp, fontFamily = FontFamily.Monospace,
                     modifier = Modifier.padding(horizontal = 8.dp),
                 )
                 BarButton("+") { session.setGap(session.gapMm + 0.5f) }
@@ -536,7 +611,7 @@ private fun LiveBar(session: Session, modifier: Modifier = Modifier) {
                 (if (session.source == Source.Me) "Playing here · " else "Streaming · ") +
                     shortName(session.clipName, 34),
                 color = Color(0x99FFFFFF),
-                fontSize = 11.sp,
+                fontSize = 13.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -550,9 +625,9 @@ private fun BarButton(label: String, onClick: () -> Unit) {
         Modifier
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 14.dp, vertical = 9.dp),
     ) {
-        Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text(label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -799,7 +874,7 @@ private fun RemoteViewerSurface(session: Session) {
         } else {
             Text(
                 if (lost) "Waiting for the host" else "Connecting",
-                color = Color(0x99FFFFFF), fontSize = 14.sp,
+                color = Color(0x99FFFFFF), fontSize = 16.sp,
             )
         }
     }
@@ -852,7 +927,7 @@ private fun Panel(content: @Composable () -> Unit) {
 
 @Composable
 private fun SectionTitle(text: String) {
-    Text(text, fontSize = 17.sp, color = Ink, fontWeight = FontWeight.SemiBold)
+    Text(text, fontSize = 20.sp, color = Ink, fontWeight = FontWeight.SemiBold)
     Spacer(Modifier.height(12.dp))
 }
 
@@ -861,7 +936,7 @@ private fun BigButton(label: String, primary: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(50.dp)
+            .height(56.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(if (primary) Accent else Color.Transparent)
             .border(1.dp, if (primary) Accent else Line, RoundedCornerShape(12.dp))
@@ -871,7 +946,7 @@ private fun BigButton(label: String, primary: Boolean, onClick: () -> Unit) {
         Text(
             label,
             color = if (primary) Color.White else Ink,
-            fontSize = 15.sp,
+            fontSize = 17.sp,
             fontWeight = FontWeight.SemiBold,
         )
     }
@@ -884,9 +959,9 @@ private fun SmallButton(label: String, onClick: () -> Unit) {
             .clip(RoundedCornerShape(10.dp))
             .background(AccentSoft)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 18.dp, vertical = 12.dp),
     ) {
-        Text(label, color = Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(label, color = Accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -913,7 +988,7 @@ private fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> U
                 Text(
                     label,
                     color = if (on) Ink else Sub,
-                    fontSize = 13.sp,
+                    fontSize = 15.sp,
                     fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -931,11 +1006,11 @@ private fun StepperRow(
     onPlus: () -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 14.sp, color = Ink, modifier = Modifier.weight(1f))
+        Text(label, fontSize = 16.sp, color = Ink, modifier = Modifier.weight(1f))
         StepChip("−", onMinus)
         Text(
             value,
-            fontSize = 14.sp,
+            fontSize = 16.sp,
             color = Ink,
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.Center,
@@ -949,13 +1024,13 @@ private fun StepperRow(
 private fun StepChip(label: String, onClick: () -> Unit) {
     Box(
         Modifier
-            .width(38.dp)
-            .height(38.dp)
-            .clip(RoundedCornerShape(19.dp))
-            .border(1.dp, Line, RoundedCornerShape(19.dp))
+            .width(46.dp)
+            .height(46.dp)
+            .clip(RoundedCornerShape(23.dp))
+            .border(1.dp, Line, RoundedCornerShape(23.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = Ink, fontSize = 17.sp)
+        Text(label, color = Ink, fontSize = 20.sp)
     }
 }

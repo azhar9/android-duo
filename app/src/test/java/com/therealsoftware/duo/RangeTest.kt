@@ -1,4 +1,4 @@
-package com.azhar.duo
+package com.therealsoftware.duo
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

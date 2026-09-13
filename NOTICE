@@ -1,0 +1,93 @@
+# Third-party notices
+
+Duo is built on other people's work. This file lists what it uses and under
+what terms.
+
+Duo itself is MIT licensed. See [LICENSE](LICENSE).
+
+---
+
+## Shipped in the app
+
+### AndroidX — Jetpack Compose
+
+`androidx.compose.ui`, `androidx.compose.foundation`, `androidx.compose.material3`,
+`androidx.compose.runtime`, and their transitive dependencies.
+
+Copyright the Android Open Source Project.
+Licensed under the Apache License, Version 2.0.
+<https://www.apache.org/licenses/LICENSE-2.0>
+<https://developer.android.com/jetpack/compose>
+
+The interface is drawn with Compose, including the grid, the floating control
+bar, and the cards on the setup screen.
+
+### AndroidX — Activity and Core
+
+`androidx.activity:activity-compose`, `androidx.core:core-ktx`, and their
+transitive dependencies.
+
+Copyright the Android Open Source Project.
+Licensed under the Apache License, Version 2.0.
+
+`activity-compose` supplies the back gesture handling and the launcher that
+opens Android's photo picker.
+
+### AndroidX Media3 — ExoPlayer
+
+`androidx.media3:media3-exoplayer` and its transitive dependencies.
+
+Copyright the Android Open Source Project.
+Licensed under the Apache License, Version 2.0.
+<https://developer.android.com/media/media3>
+
+ExoPlayer plays the video, seeks to byte ranges, and follows the playback clock
+the host sends.
+
+### Kotlin and kotlinx.coroutines
+
+The Kotlin standard library and `org.jetbrains.kotlinx:kotlinx-coroutines-android`.
+
+Copyright JetBrains s.r.o. and Kotlin Programming Language contributors.
+Licensed under the Apache License, Version 2.0.
+<https://kotlinlang.org>
+<https://github.com/Kotlin/kotlinx.coroutines>
+
+---
+
+## Used to build and test, not shipped
+
+### JUnit 4
+
+`junit:junit:4.13.2`, used for the unit tests only. It is not part of the app.
+
+Copyright JUnit contributors.
+Licensed under the Eclipse Public License 1.0.
+<https://junit.org/junit4/>
+
+### Android Gradle Plugin and Gradle
+
+Copyright the Android Open Source Project and Gradle, Inc.
+Licensed under the Apache License, Version 2.0.
+
+---
+
+## The audio-visual standard
+
+The H.264 and AAC decoders used for playback are part of Android itself, not of
+this app.
+
+---
+
+## Not included
+
+No analytics, advertising, crash-reporting or social libraries are part of this
+app. If that ever changes, they will appear in this file first.
+
+---
+
+## The Apache License, Version 2.0
+
+A copy of the licence that covers most of the above is available at
+<https://www.apache.org/licenses/LICENSE-2.0>, and the full text is included in
+the source of each project listed.
