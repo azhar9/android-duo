@@ -97,8 +97,14 @@ jobs:
 
       # Internal testing only. Nobody outside the tester list sees this, and
       # promoting it to production stays a deliberate act in the Console.
+      #
+      # A secret cannot be read in an "if". Reading it there made the whole
+      # workflow unreadable to GitHub, and every run failed before it started.
+      # It is passed in as a variable, and the step looks at that.
       - name: Send the bundle to the Play internal track
-        if: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
+        if: ${{ env.PLAY_JSON != '' }}
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
@@ -108,7 +114,9 @@ jobs:
           status: completed
 
       - name: Note that Play was skipped
-        if: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON == '' }}
+        if: ${{ env.PLAY_JSON == '' }}
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
           echo "::notice::No PLAY_SERVICE_ACCOUNT_JSON secret, so the bundle was"\
           "not sent to Play. See PLAYSTORE.md for how to set it up."
