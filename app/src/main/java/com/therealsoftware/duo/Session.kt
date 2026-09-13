@@ -1,6 +1,7 @@
 package com.therealsoftware.duo
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -12,14 +13,16 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import kotlin.math.abs
 
 enum class Phase { Menu, Waiting, Live, Dead }
 
 /** What the two phones put on the canvas. */
-enum class Mode { Canvas, Video, Web }
+enum class Mode { Canvas, Video, Web, Picture }
 
 /** Which phone holds the clip. The geometry role and the media role are separate. */
 enum class Source { None, Me, Peer }
@@ -85,6 +88,19 @@ class Session(private val scope: CoroutineScope, context: Context) {
     var liveMode by mutableStateOf(Mode.Canvas); private set
     val videoMode: Boolean get() = liveMode == Mode.Video
     val webMode: Boolean get() = liveMode == Mode.Web
+    val pictureMode: Boolean get() = liveMode == Mode.Picture
+
+    /**
+     * The phone holding the picture renders it and sends the other half. For a
+     * web page that is always the host, because the host owns the browser. For a
+     * picture it is whichever phone picked it, so either phone can serve.
+     */
+    val servesFrames: Boolean
+        get() = when (liveMode) {
+            Mode.Web -> isHost
+            Mode.Picture -> source == Source.Me
+            else -> false
+        }
 
     // --- the media role ---
 
@@ -96,6 +112,13 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
     /** The clip this phone picked, if any. */
     var myClip by mutableStateOf<Uri?>(null); private set
+
+    // --- a still picture or a document, shown across both screens ---
+
+    var pictureUri by mutableStateOf<Uri?>(null); private set
+    var picture by mutableStateOf<Bitmap?>(null); private set
+    var picturePage by mutableIntStateOf(0); private set
+    var picturePages by mutableIntStateOf(1); private set
 
     private var myClipName = ""
 
@@ -205,6 +228,53 @@ class Session(private val scope: CoroutineScope, context: Context) {
                 }
             }
         }
+    }
+
+    /**
+     * Take a picture or a document from the picker. This phone renders it and
+     * sends the other phone its half, exactly as the host does for a web page.
+     */
+    fun pickPicture(uri: Uri, displayName: String) {
+        scope.launch {
+            pictureUri = uri
+            picturePage = 0
+            picturePages = pageCount(appContext, uri)
+            source = Source.Me
+            clipName = displayName.ifEmpty { "picture" }
+            renderPicture()
+            if (phase == Phase.Live) {
+                link.send(JSONObject().put("t", "picture").put("p", picturePage))
+            }
+        }
+    }
+
+    /** Turn the page. Only the phone showing the document can do this. */
+    fun stepPage(delta: Int) {
+        if (pictureUri == null || picturePages <= 1) return
+        val next = (picturePage + delta).coerceIn(0, picturePages - 1)
+        if (next == picturePage) return
+        picturePage = next
+        scope.launch {
+            renderPicture()
+            if (phase == Phase.Live && isHost) {
+                link.send(JSONObject().put("t", "picture").put("p", picturePage))
+            }
+        }
+    }
+
+    /** Render the picked file onto a canvas the size of both screens together. */
+    private suspend fun renderPicture() {
+        val uri = pictureUri ?: return
+        val w = world.totalW
+        val h = world.h
+        if (w <= 0f || h <= 0f) return
+        val u = appContext.resources.displayMetrics.density * calib
+        val shot = withContext(Dispatchers.Default) {
+            renderPicture(appContext, uri, picturePage, (w * u).toInt(), (h * u).toInt())
+        } ?: return
+        picture?.recycle()
+        picture = shot.canvas
+        picturePages = shot.pages
     }
 
     /** Set the gap. The host tells the client; both then use one value. */
@@ -331,6 +401,12 @@ class Session(private val scope: CoroutineScope, context: Context) {
                 val use = when (mode) {
                     Mode.Canvas -> Mode.Canvas
                     Mode.Web -> Mode.Web
+                    Mode.Picture -> if (myPicturePicked()) {
+                        source = Source.Me
+                        Mode.Picture
+                    } else {
+                        Mode.Canvas
+                    }
                     Mode.Video -> when {
                         myClip != null -> {
                             source = Source.Me
@@ -418,6 +494,11 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
             "vid" -> if (!isHost) followHost(j)
 
+            "picture" -> if (!isHost) {
+                picturePage = j.optInt("p", 0)
+                scope.launch { renderPicture() }
+            }
+
 
             "ball" -> if (!isHost) {
                 world.applyRemote(
@@ -446,6 +527,8 @@ class Session(private val scope: CoroutineScope, context: Context) {
         if (abs(p.currentPosition - pos) > SYNC_TOLERANCE_MS) p.seekTo(pos)
     }
 
+    private fun myPicturePicked() = pictureUri != null
+
     private fun begin(
         aw: Float, ah: Float, bw: Float, bh: Float,
         first: Boolean, use: Mode, gap: Float, url: String,
@@ -461,8 +544,10 @@ class Session(private val scope: CoroutineScope, context: Context) {
         world.setGapMm(gapMm)
         world.place(world.totalW / 2f, world.h / 2f)
         if (use == Mode.Video) startPlayer() else stopPlayer()
-        // Web mode streams rendered frames, so only the host serves them.
-        if (use == Mode.Web && isHost) streamer.start() else streamer.stop()
+        // The layout has to be known before the picture can be sized to it.
+        if (use == Mode.Picture) scope.launch { renderPicture() }
+        // Whoever holds the content renders it and serves the frames.
+        if (servesFrames) streamer.start() else streamer.stop()
         note = ""
         phase = Phase.Live
     }

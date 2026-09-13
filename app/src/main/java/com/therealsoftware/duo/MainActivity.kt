@@ -171,6 +171,7 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
     }
 
     val pick = clipPicker { uri, name -> session.pickClip(uri, name) }
+    val choosePicture = documentPicker { uri, name -> session.pickPicture(uri, name) }
 
     Column(
         Modifier
@@ -254,17 +255,19 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
         Panel {
             SectionTitle("What to show")
             Segmented(
-                options = listOf("Grid", "Video", "Web"),
+                options = listOf("Grid", "Video", "Web", "File"),
                 selected = when (session.mode) {
                     Mode.Canvas -> 0
                     Mode.Video -> 1
                     Mode.Web -> 2
+                    Mode.Picture -> 3
                 },
                 onSelect = {
                     session.mode = when (it) {
                         0 -> Mode.Canvas
                         1 -> Mode.Video
-                        else -> Mode.Web
+                        2 -> Mode.Web
+                        else -> Mode.Picture
                     }
                 },
             )
@@ -321,6 +324,27 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
                             "check the gap.",
                         fontSize = 15.sp, color = Sub, lineHeight = 18.sp,
                     )
+                }
+                Mode.Picture -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            session.pictureUri?.let { shortName(session.clipName, 22) }
+                                ?: "No picture on this phone",
+                            fontSize = 16.sp,
+                            color = if (session.pictureUri == null) Sub else Ink,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "A photo or a PDF, shown whole across both screens.",
+                            fontSize = 14.sp, color = Sub,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    SmallButton(if (session.pictureUri == null) "Choose" else "Change") {
+                        choosePicture.launch(DOCUMENT_TYPES)
+                    }
                 }
             }
         }
@@ -515,8 +539,10 @@ private fun LiveScreen(session: Session) {
 
         Box(Modifier.fillMaxSize()) {
             when {
-                session.webMode && session.isHost -> RemoteHostSurface(session) { webView = it }
-                session.webMode -> RemoteViewerSurface(session)
+                session.webMode && session.servesFrames ->
+                    RemoteHostSurface(session) { webView = it }
+                session.pictureMode && session.servesFrames -> PictureHostSurface(session)
+                session.webMode || session.pictureMode -> RemoteViewerSurface(session)
                 session.videoMode -> VideoSurface(session)
             }
 
@@ -551,7 +577,9 @@ private fun LiveScreen(session: Session) {
                 val u = v.u
                 clipRect {
                     translate(left = v.padX - world.sliceX * u, top = v.padY - world.sliceY * u) {
-                        if (!session.videoMode && !session.webMode) {
+                        // A picture and a page are the content itself. The grid
+                        // would draw over them, so it belongs on the test screen only.
+                        if (!session.videoMode && !session.webMode && !session.pictureMode) {
                             var x = 0f
                             while (x <= world.totalW) {
                                 val bold = x % 200f < 1f
@@ -575,7 +603,7 @@ private fun LiveScreen(session: Session) {
                         }
 
                         // Sits on the seam, drawn half here and half on the neighbour.
-                        if (!session.webMode) {
+                        if (!session.webMode && !session.pictureMode) {
                             val cx = world.totalW / 2f * u
                             val cy = world.h / 2f * u
                             drawCircle(
@@ -644,6 +672,26 @@ private fun LiveBar(session: Session, web: WebView?, modifier: Modifier = Modifi
     ) {
         if (session.webMode && session.isHost && web != null) {
             BrowserBar(web, typed) { typed = it }
+            Spacer(Modifier.height(8.dp))
+        }
+        if (session.pictureMode && session.servesFrames && session.picturePages > 1) {
+            Row(
+                Modifier
+                    .shadow(10.dp, RoundedCornerShape(24.dp))
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color(0xE6151515))
+                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(24.dp))
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BarButton("<") { session.stepPage(-1) }
+                Text(
+                    "${session.picturePage + 1} of ${session.picturePages}",
+                    color = Color.White, fontSize = 15.sp,
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                )
+                BarButton(">") { session.stepPage(1) }
+            }
             Spacer(Modifier.height(8.dp))
         }
         Row(
@@ -941,6 +989,80 @@ private class FrameCutter {
 }
 
 /**
+ * The phone holding the picture renders it once, shows its own half, and sends
+ * the other half. There is no clock: a picture does not move.
+ */
+@Composable
+private fun PictureHostSurface(session: Session) {
+    val world = session.world
+    val density = LocalDensity.current.density
+    val calib = session.calib
+    val pic = session.picture
+    val gap = session.gapMm
+
+    var mine by remember { mutableStateOf<ImageBitmap?>(null) }
+    var pending by remember { mutableStateOf<ByteArray?>(null) }
+
+    // Cut the two halves whenever the picture, the layout, or the gap changes.
+    LaunchedEffect(pic, gap, world.totalW, world.h, world.sliceX, world.sliceY) {
+        val src = pic ?: return@LaunchedEffect
+        val u = density * calib
+        val halves = withContext(Dispatchers.Default) { cutHalves(src, world, u) }
+            ?: return@LaunchedEffect
+        mine = halves.first.asImageBitmap()
+        pending = halves.second
+    }
+
+    // A viewer can arrive after the picture was cut, so the bytes are kept and
+    // sent again. Encoding happens once; this only writes to a socket.
+    LaunchedEffect(pending) {
+        val bytes = pending ?: return@LaunchedEffect
+        while (isActive) {
+            if (session.streamer.connected) {
+                withContext(Dispatchers.IO) { session.streamer.send(bytes) }
+            }
+            delay(500)
+        }
+    }
+
+    Box(Modifier.fillMaxSize().background(Night), contentAlignment = Alignment.Center) {
+        val shown = mine
+        if (shown != null) {
+            Image(
+                bitmap = shown,
+                contentDescription = null,
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Text("Choose a picture or a PDF", color = Color(0x99FFFFFF), fontSize = 16.sp)
+        }
+    }
+}
+
+/**
+ * The two halves of one picture, plus the other phone's half already encoded.
+ * The bytes are made once and kept, because a picture does not change.
+ */
+private fun cutHalves(src: Bitmap, world: World, u: Float): Pair<Bitmap, ByteArray?>? {
+    fun cut(x: Float, y: Float, w: Float, h: Float): Bitmap? {
+        val px = (x * u).toInt().coerceIn(0, src.width - 1)
+        val py = (y * u).toInt().coerceIn(0, src.height - 1)
+        val pw = (w * u).toInt().coerceIn(1, src.width - px)
+        val ph = (h * u).toInt().coerceIn(1, src.height - py)
+        return runCatching { Bitmap.createBitmap(src, px, py, pw, ph) }.getOrNull()
+    }
+    val mine = cut(world.sliceX, world.sliceY, world.sliceW, world.sliceH) ?: return null
+    val theirs = cut(world.peerX, world.peerY, world.peerW, world.peerH)
+    val jpeg = theirs?.let {
+        ByteArrayOutputStream().also { out -> it.compress(Bitmap.CompressFormat.JPEG, 85, out) }
+            .toByteArray()
+    }
+    theirs?.recycle()
+    return mine to jpeg
+}
+
+/**
  * The viewer draws the frames the host sends. It holds no browser, so what it
  * shows is exactly what the host laid out — the two halves cannot disagree.
  */
@@ -1004,6 +1126,19 @@ private fun clipPicker(
         if (uri != null) onPicked(uri, displayName(context, uri))
     }
 }
+
+@Composable
+private fun documentPicker(
+    onPicked: (Uri, String) -> Unit,
+): ManagedActivityResultLauncher<Array<String>, Uri?> {
+    val context = LocalContext.current
+    return rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) onPicked(uri, displayName(context, uri))
+    }
+}
+
+/** Android renders PDF pages itself, so a document needs no extra library. */
+private val DOCUMENT_TYPES = arrayOf("image/*", "application/pdf")
 
 private fun pickerRequest() =
     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)

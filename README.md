@@ -18,6 +18,7 @@ The app has three modes. The host picks the mode. Both phones then follow it.
 | Grid | A grid and a ball. Drag the ball from one phone to the other. This is the setup screen: use it to set the gap and check the alignment. |
 | Video | One video file. Either phone can serve it; the other streams it. |
 | Web | One web page. The host lays it out once and streams the picture. |
+| File | A photo or a PDF. The whole page is shown across both screens. |
 
 This project takes its idea from foldable phones and dual-screen phones. The
 Samsung Fold has one panel in one body. The Microsoft Surface Duo has two panels
@@ -168,6 +169,13 @@ and moves to the host position if it drifts more than 200 ms.
 
 Only the host makes sound. Two phones in one room would echo.
 
+**File.** Touch **Choose** and pick a photo or a PDF. The whole picture is
+fitted across the two screens rather than cropped, so a photograph keeps all
+four edges and a document keeps its footer. A PDF shows one page at a time;
+**<** and **>** turn the page.
+
+Android renders PDF pages itself, so a document needs no extra library.
+
 **Web.** The host types an address, or types words to search. That phone lays
 the page out once, shows its own half, and streams the other half as pictures.
 The bar at the bottom of the host has Back, the current address, and Go.
@@ -300,6 +308,8 @@ local network is a few milliseconds. The user does not see this delay.
 ```
 app/src/main/java/com/therealsoftware/duo/
   World.kt         The canvas, the axis, the gap, the crop maths, and the ball.
+  Picture.kt       Decodes a photo and renders a PDF page onto the canvas.
+  Ports.kt         Moves every socket with the channel number.
   Link.kt          The discovery and the network connection.
   MediaServer.kt   Serves the picked clip to the other phone over HTTP.
   Range.kt         Reads HTTP Range headers. Pure, so it is testable.
