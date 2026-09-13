@@ -44,6 +44,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -680,6 +682,10 @@ private fun LiveBar(session: Session, web: WebView?, modifier: Modifier = Modifi
             BrowserBar(web, typed) { typed = it }
             Spacer(Modifier.height(8.dp))
         }
+        if (session.videoMode) {
+            VideoControls(session)
+            Spacer(Modifier.height(8.dp))
+        }
         if (session.pictureMode && session.servesFrames && session.picturePages > 1) {
             Row(
                 Modifier
@@ -722,10 +728,6 @@ private fun LiveBar(session: Session, web: WebView?, modifier: Modifier = Modifi
             BarButton(if (session.myClip == null) "Clip" else "Swap") {
                 pick.launch(pickerRequest())
             }
-            if (session.videoMode && session.isHost) {
-                Spacer(Modifier.width(10.dp))
-                BarButton(if (session.playing) "Pause" else "Play") { session.togglePlay() }
-            }
         }
 
         if (session.videoMode && session.clipName.isNotEmpty()) {
@@ -740,6 +742,60 @@ private fun LiveBar(session: Session, web: WebView?, modifier: Modifier = Modifi
             )
         }
     }
+}
+
+/** Play, pause, and a scrubber. Either phone can drive; the host obeys. */
+@Composable
+private fun VideoControls(session: Session) {
+    val duration = session.durationMs
+    var scrubbing by remember { mutableStateOf(false) }
+    var scrubTo by remember { mutableFloatStateOf(0f) }
+
+    val position = if (scrubbing) scrubTo.toLong() else session.positionMs
+    val progress = if (duration > 0L) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .shadow(10.dp, RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color(0xE6151515))
+            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(24.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BarButton(if (session.playing) "Pause" else "Play") {
+            session.videoCommand(play = !session.playing)
+        }
+        Text(
+            clock(position), color = Color.White, fontSize = 14.sp,
+            modifier = Modifier.padding(horizontal = 6.dp),
+        )
+        Slider(
+            value = progress,
+            onValueChange = { scrubbing = true; scrubTo = it * duration },
+            onValueChangeFinished = {
+                session.videoCommand(seekMs = scrubTo.toLong())
+                scrubbing = false
+            },
+            enabled = duration > 0L,
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = Color.White,
+                inactiveTrackColor = Color(0x55FFFFFF),
+            ),
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            clock(duration), color = Color(0x99FFFFFF), fontSize = 14.sp,
+            modifier = Modifier.padding(start = 6.dp),
+        )
+    }
+}
+
+private fun clock(ms: Long): String {
+    val seconds = (ms / 1000L).coerceAtLeast(0L)
+    return String.format(Locale.US, "%d:%02d", seconds / 60, seconds % 60)
 }
 
 /** Back, an address, and Go. Enough to browse with. */

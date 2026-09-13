@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.MediaItem
@@ -190,6 +191,14 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
     private var myW = 0f
     private var myH = 0f
+
+    /** True when this phone is being held tall rather than wide. */
+    private val isPortrait: Boolean get() = myH >= myW
+
+    /** Where the film has reached, and how long it is. Updated a few times a second. */
+    var positionMs by mutableLongStateOf(0L); private set
+    var durationMs by mutableLongStateOf(0L); private set
+    private var lastPositionTick = 0L
     private var lastSync = 0L
     private var driftStrikes = 0
 
@@ -346,9 +355,21 @@ class Session(private val scope: CoroutineScope, context: Context) {
         if (isHost) link.send(JSONObject().put("t", "axis").put("a", a.name))
     }
 
-    fun togglePlay() {
+    /**
+     * Either phone can drive. The host owns the film, so a command from the
+     * client is a request, and the host's answer travels back on the clock.
+     */
+    fun videoCommand(play: Boolean? = null, seekMs: Long? = null) {
         val p = player ?: return
-        if (p.isPlaying) p.pause() else p.play()
+        play?.let { if (it) p.play() else p.pause() }
+        seekMs?.let { p.seekTo(it) }
+        if (!isHost) {
+            link.send(
+                JSONObject().put("t", "cmd")
+                    .put("play", play?.let { if (it) 1 else 0 } ?: -1)
+                    .put("seek", seekMs ?: -1L)
+            )
+        }
     }
 
     fun touch(x: Float, y: Float, down: Boolean) {
@@ -369,6 +390,13 @@ class Session(private val scope: CoroutineScope, context: Context) {
         if (phase != Phase.Live) return
 
         player?.let { p ->
+            val now = System.currentTimeMillis()
+            if (videoMode && now - lastPositionTick > 250) {
+                lastPositionTick = now
+                positionMs = p.currentPosition
+                val d = p.duration
+                if (d > 0) durationMs = d
+            }
             val vs = p.videoSize
             if (vs.width > 0 && vs.height > 0) {
                 val a = vs.width.toFloat() / vs.height
@@ -434,6 +462,9 @@ class Session(private val scope: CoroutineScope, context: Context) {
                     .put("w", (myW / calib).toDouble())
                     .put("h", (myH / calib).toDouble())
                     .put("n", myClipName)
+                    // The two halves can only line up if the phones are held
+                    // the same way. One tall and one wide cannot meet.
+                    .put("p", if (isPortrait) 1 else 0)
             )
         }
     }
@@ -441,6 +472,12 @@ class Session(private val scope: CoroutineScope, context: Context) {
     private fun onMsg(j: JSONObject) {
         when (j.optString("t")) {
             "hello" -> if (isHost) {
+                if (j.optInt("p", -1) != (if (isPortrait) 1 else 0)) {
+                    note = "Both phones must be held the same way. " +
+                        "One is tall, the other is wide. Turn one round and try again."
+                    phase = Phase.Dead
+                    return@onMsg
+                }
                 val aw = myW / calib
                 val ah = myH / calib
                 val bw = j.optDouble("w").toFloat()
@@ -545,6 +582,14 @@ class Session(private val scope: CoroutineScope, context: Context) {
             }
 
             "vid" -> if (!isHost) followHost(j)
+
+            "cmd" -> if (isHost) {
+                val play = j.optInt("play", -1)
+                val seek = j.optLong("seek", -1L)
+                val p = player ?: return@onMsg
+                if (play == 1) p.play() else if (play == 0) p.pause()
+                if (seek >= 0L) p.seekTo(seek)
+            }
 
             "picture" -> if (!isHost) {
                 picturePage = j.optInt("p", 0)

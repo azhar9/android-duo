@@ -137,6 +137,8 @@ muted.
 ## Run the demo
 
 1. Connect both phones to the same WiFi network. One phone can supply a hotspot.
+   **Hold both phones the same way** — both tall, or both wide. The two halves
+   cannot line up otherwise, and the host refuses to start if they do not match.
 2. Start Duo on both phones. Both show the address of that phone.
 3. Check the **channel** number. Two pairs of phones on one network must use
    different channels; the two phones in a pair must match.
@@ -164,8 +166,13 @@ host sends the choice to the client.
 grid shows the join clearly, so use it to set the gap and check the alignment.
 
 **Video.** Both phones play the same clip. The host owns the clock. It sends its
-position four times each second. The client takes the play state from the host,
-and moves to the host position if it drifts more than 200 ms.
+position twice each second. The client takes the play state from the host, and
+moves to the host position only when it has drifted more than half a second, for
+two readings running — a single bad reading while buffering is not a reason to
+jump.
+
+Both phones get **Play, Pause and a scrubber**. Either one can drive; a command
+from the other phone is passed to the host, which owns the film.
 
 Only the host makes sound. Two phones in one room would echo.
 
