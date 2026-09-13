@@ -879,7 +879,13 @@ private fun RemoteHostSurface(session: Session, onWeb: (WebView) -> Unit) {
             factory = { ctx ->
                 WebView(ctx).apply {
                     settings.javaScriptEnabled = true
-                    settings.useWideViewPort = true
+                    // false, not true. With it on, the WebView honours the page's
+                    // own viewport and picks its own zoom — which was measured at
+                    // 137%, so the page came out wider than both screens and the
+                    // right edge was lost. With it off the WebView lays the page
+                    // out at a fixed width and scales it to fit the view, so the
+                    // page always fills the canvas exactly.
+                    settings.useWideViewPort = false
                     settings.loadWithOverviewMode = true
                     settings.builtInZoomControls = false
                     settings.displayZoomControls = false
