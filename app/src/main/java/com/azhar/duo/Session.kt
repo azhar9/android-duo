@@ -31,9 +31,6 @@ private const val SYNC_INTERVAL_MS = 400L
 
 const val DEFAULT_URL = "https://en.wikipedia.org/wiki/Foldable_smartphone"
 
-/** A vertical scroll order from the other phone. The counter forces a fresh apply. */
-data class ScrollCmd(val fraction: Float, val seq: Int)
-
 /**
  * Wires the transport to the shared canvas.
  *
@@ -109,10 +106,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
     /** The address both phones load. The host owns it. */
     var liveUrl by mutableStateOf(""); private set
 
-    /** A vertical scroll order from the other phone. */
-    var scrollCmd by mutableStateOf<ScrollCmd?>(null); private set
 
-    private var scrollSeq = 0
     private var myW = 0f
     private var myH = 0f
     private var lastSync = 0L
@@ -223,11 +217,6 @@ class Session(private val scope: CoroutineScope, context: Context) {
         }
     }
 
-    /** A vertical scroll on this phone, as a fraction of the scrollable range. */
-    fun sendScroll(fraction: Float) {
-        if (phase != Phase.Live || !webMode) return
-        link.send(JSONObject().put("t", "scroll").put("f", fraction.toDouble()))
-    }
 
     /** Called once per frame. Host simulates and broadcasts; client is a pure mirror. */
     fun tick(dt: Float) {
@@ -404,11 +393,6 @@ class Session(private val scope: CoroutineScope, context: Context) {
 
             "vid" -> if (!isHost) followHost(j)
 
-            "scroll" -> if (!isHost) {
-                scrollCmd = ScrollCmd(
-                    j.optDouble("f", 0.0).toFloat().coerceIn(0f, 1f), ++scrollSeq,
-                )
-            }
 
             "ball" -> if (!isHost) {
                 world.applyRemote(

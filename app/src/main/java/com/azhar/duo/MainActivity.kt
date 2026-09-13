@@ -113,16 +113,6 @@ private val Seam = Color(0xFF00E5A0)
 private fun mm(v: Float) = String.format(Locale.US, "%.1f", v)
 private fun pct(v: Float) = String.format(Locale.US, "%.0f%%", v * 100f)
 
-/**
- * WebView keeps its scroll extents protected, and they are the only way to ask
- * how wide the page actually laid out. Widening the visibility is the whole point
- * of this subclass.
- */
-private class MeasurableWebView(context: Context) : WebView(context) {
-    public override fun computeHorizontalScrollRange(): Int = super.computeHorizontalScrollRange()
-    public override fun computeVerticalScrollRange(): Int = super.computeVerticalScrollRange()
-}
-
 /** Where the logical canvas sits inside a full-screen surface. */
 private class Viewport(val u: Float, val padX: Float, val padY: Float)
 

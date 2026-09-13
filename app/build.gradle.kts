@@ -10,7 +10,10 @@ android {
 
     defaultConfig {
         applicationId = "com.azhar.duo"
-        minSdk = 33
+        // The code itself is clean down to API 23 (Android 6). We claim 26,
+        // because adaptive icons and a modern WebView start there. Anything
+        // below Android 13 has never been run — test before trusting it.
+        minSdk = 26
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"

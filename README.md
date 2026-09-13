@@ -36,7 +36,8 @@ share one coordinate space. Each phone draws its own part of that space.
 
 ## Requirements
 
-- Two Android phones with Android 13 or later.
+- Two Android phones with Android 8.0 or later. The two we used run
+  Android 13 and Android 17, and nothing below 13 has been tried.
 - One WiFi network for both phones. One phone can supply a hotspot.
 - A computer with JDK 17 or later and the Android SDK. You need the computer
   only to build and install the app.
