@@ -18,9 +18,6 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 
-/** The port the source phone serves its video on. */
-const val MEDIA_PORT = 8901
-
 /** The path the other phone asks for. */
 const val MEDIA_PATH = "/video"
 
@@ -37,7 +34,7 @@ private class Request(val method: String, val path: String, val headers: Map<Str
  * a real file descriptor we can seek in. When one does not, the file is copied
  * into the cache once and served from there.
  */
-class MediaServer(context: Context, private val scope: CoroutineScope) {
+class MediaServer(context: Context, private val scope: CoroutineScope, private val ports: Ports) {
 
     private val appContext = context.applicationContext
 
@@ -65,7 +62,7 @@ class MediaServer(context: Context, private val scope: CoroutineScope) {
             try {
                 ServerSocket().apply {
                     reuseAddress = true
-                    bind(InetSocketAddress(MEDIA_PORT))
+                    bind(InetSocketAddress(ports.media))
                 }.use { server ->
                     while (isActive) {
                         val s = try {

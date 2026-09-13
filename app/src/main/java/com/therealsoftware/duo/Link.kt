@@ -24,8 +24,6 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 
-private const val TCP_PORT = 8899
-private const val UDP_PORT = 8898
 private const val MAGIC = "ANDROID_DUO_V1"
 private const val DISCOVER_TIMEOUT_MS = 6000L
 
@@ -47,7 +45,7 @@ sealed interface NetEvent {
  * between two phones gives you file transfer at best. Put both on one hotspot and
  * the RTT is a few ms, which is well under what this needs.
  */
-class Link(private val scope: CoroutineScope) {
+class Link(private val scope: CoroutineScope, private val ports: Ports) {
 
     // replay=1 so tryEmit never silently drops an event if collection starts late.
     private val _events = MutableSharedFlow<NetEvent>(
@@ -74,7 +72,7 @@ class Link(private val scope: CoroutineScope) {
                 val responder = launch { udpResponder() }
                 ServerSocket().apply {
                     reuseAddress = true
-                    bind(InetSocketAddress(TCP_PORT))
+                    bind(InetSocketAddress(ports.link))
                 }.use { server ->
                     val s = server.accept()
                     responder.cancel()
@@ -86,16 +84,27 @@ class Link(private val scope: CoroutineScope) {
         }
     }
 
-    fun join() {
+    /**
+     * Connect to a host. Pass [host] to skip the search and go straight there,
+     * which is how you pick one host out of several on the same network.
+     */
+    fun join(host: String? = null) {
         job = scope.launch(Dispatchers.IO) {
             try {
-                val addr = discover()
+                val addr = if (host.isNullOrBlank()) discover() else runCatching {
+                    InetAddress.getByName(host.trim())
+                }.getOrNull()
                 if (addr == null) {
-                    _events.tryEmit(NetEvent.Down("no host found — same hotspot?"))
+                    _events.tryEmit(
+                        NetEvent.Down(
+                            if (host.isNullOrBlank()) "no host found — same hotspot?"
+                            else "cannot reach $host"
+                        )
+                    )
                     return@launch
                 }
                 val s = Socket()
-                s.connect(InetSocketAddress(addr, TCP_PORT), 5000)
+                s.connect(InetSocketAddress(addr, ports.link), 5000)
                 attach(s, isHost = false)
             } catch (e: Exception) {
                 _events.tryEmit(NetEvent.Down(e.message ?: "join failed"))
@@ -153,7 +162,7 @@ class Link(private val scope: CoroutineScope) {
         val sock = DatagramSocket(null).apply {
             reuseAddress = true
             broadcast = true
-            bind(InetSocketAddress(UDP_PORT))
+            bind(InetSocketAddress(ports.discovery))
         }
         try {
             val buf = ByteArray(64)
@@ -184,7 +193,7 @@ class Link(private val scope: CoroutineScope) {
             val target = broadcastAddress()
             val deadline = System.currentTimeMillis() + DISCOVER_TIMEOUT_MS
             while (System.currentTimeMillis() < deadline) {
-                runCatching { sock.send(DatagramPacket(probe, probe.size, target, UDP_PORT)) }
+                runCatching { sock.send(DatagramPacket(probe, probe.size, target, ports.discovery)) }
                 val buf = ByteArray(64)
                 val p = DatagramPacket(buf, buf.size)
                 try {

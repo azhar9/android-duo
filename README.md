@@ -36,6 +36,19 @@ can do this.
 Duo does the nearest useful thing. One app runs on both phones. Both phones
 share one coordinate space. Each phone draws its own part of that space.
 
+## Using more than two phones
+
+Every socket moves with a **channel** number, and the channel is set on the
+setup screen. Two pairs of phones on one network must use different channels,
+or they will fight over the same ports and the second pair will fail for
+reasons that look like magic.
+
+The channel is shown before you start. Pair one uses channel 1, pair two uses
+channel 2, and so on.
+
+To pick one host out of several, type its address into **Join this address**.
+That skips the search and goes straight there.
+
 ## Requirements
 
 - Two Android phones with Android 8.0 or later. The two we used run
@@ -123,12 +136,15 @@ muted.
 ## Run the demo
 
 1. Connect both phones to the same WiFi network. One phone can supply a hotspot.
-2. Start Duo on both phones.
-3. Touch HOST on the left phone. The screen shows the IP address.
-4. Touch JOIN on the right phone.
-5. Both phones show the canvas.
-6. Turn the gap dial until the picture agrees across the join.
-7. Drag the ball with your finger.
+2. Start Duo on both phones. Both show the address of that phone.
+3. Check the **channel** number. Two pairs of phones on one network must use
+   different channels; the two phones in a pair must match.
+4. Touch HOST on the left phone.
+5. On the right phone, type the host's address into **Join this address** and
+   touch JOIN. Leave the address empty to let it find the host on its own.
+6. Both phones show the canvas.
+7. Turn the gap dial until the picture agrees across the join.
+8. Drag the ball with your finger.
 
 The ball obeys the walls of the full canvas. The join between the two phones is
 not a wall.
@@ -152,8 +168,9 @@ and moves to the host position if it drifts more than 200 ms.
 
 Only the host makes sound. Two phones in one room would echo.
 
-**Web.** The host types an address. That phone lays the page out once, shows
-its own half, and streams the other half as pictures.
+**Web.** The host types an address, or types words to search. That phone lays
+the page out once, shows its own half, and streams the other half as pictures.
+The bar at the bottom of the host has Back, the current address, and Go.
 
 Only one phone runs a browser, so the two halves cannot disagree about layout.
 This is also why a video on the page plays with sound: the host is an ordinary

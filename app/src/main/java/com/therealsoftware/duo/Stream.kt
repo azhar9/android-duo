@@ -18,9 +18,6 @@ import java.net.Socket
 
 private const val TAG = "DuoStream"
 
-/** The port the host streams rendered frames on. */
-const val STREAM_PORT = 8902
-
 /** Frames each second for the remote display. */
 const val REMOTE_FPS = 10L
 
@@ -77,7 +74,7 @@ fun readFrame(input: InputStream): ByteArray? {
  * A dead viewer is not fatal. The host drops the connection, waits for the next
  * one, and keeps drawing its own half in the meantime.
  */
-class FrameServer(private val scope: CoroutineScope) {
+class FrameServer(private val scope: CoroutineScope, private val ports: Ports) {
 
     private var job: Job? = null
 
@@ -96,10 +93,10 @@ class FrameServer(private val scope: CoroutineScope) {
             val server = try {
                 ServerSocket().apply {
                     reuseAddress = true
-                    bind(InetSocketAddress(STREAM_PORT))
+                    bind(InetSocketAddress(ports.frames))
                 }
             } catch (e: Exception) {
-                Log.i(TAG, "cannot listen on $STREAM_PORT: ${e.message}")
+                Log.i(TAG, "cannot listen on ${ports.frames}: ${e.message}")
                 return@launch
             }
             try {
@@ -155,7 +152,7 @@ class FrameServer(private val scope: CoroutineScope) {
  * [onFrame] runs on a background thread, so it must not touch the user
  * interface directly.
  */
-class FrameClient(private val scope: CoroutineScope) {
+class FrameClient(private val scope: CoroutineScope, private val ports: Ports) {
 
     private var job: Job? = null
 
@@ -164,7 +161,7 @@ class FrameClient(private val scope: CoroutineScope) {
         job = scope.launch(Dispatchers.IO) {
             try {
                 Socket().use { s ->
-                    s.connect(InetSocketAddress(host, STREAM_PORT), 5000)
+                    s.connect(InetSocketAddress(host, ports.frames), 5000)
                     s.tcpNoDelay = true
                     val input = BufferedInputStream(s.getInputStream())
                     while (isActive) {

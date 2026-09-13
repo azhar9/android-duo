@@ -188,17 +188,64 @@ private fun SetupScreen(session: Session, wDp: Float, hDp: Float) {
         Spacer(Modifier.height(24.dp))
 
         // --- connect ---
+        val myIp = remember { Link.localIp() }
+        var hostToFind by remember { mutableStateOf("") }
+
         Panel {
             Text("Start a session", fontSize = 20.sp, color = Ink, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(4.dp))
             Text(
                 "Both phones must be on the same WiFi. One can share a hotspot.",
-                fontSize = 15.sp, color = Sub, lineHeight = 18.sp,
+                fontSize = 15.sp, color = Sub, lineHeight = 20.sp,
             )
+
+            Spacer(Modifier.height(14.dp))
+            StepperRow(
+                label = "Channel",
+                value = "${session.channel + 1}",
+                onMinus = { session.chooseChannel(session.channel - 1) },
+                onPlus = { session.chooseChannel(session.channel + 1) },
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Two pairs of phones on one network must use different channels. " +
+                    "Both phones in a pair must match.",
+                fontSize = 14.sp, color = Sub, lineHeight = 19.sp,
+            )
+
             Spacer(Modifier.height(16.dp))
+            Text("This phone is at", fontSize = 14.sp, color = Sub)
+            Spacer(Modifier.height(2.dp))
+            Text(myIp, fontSize = 20.sp, color = Ink, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(14.dp))
             BigButton("Be the host", primary = true) { session.startHost(wDp, hDp) }
-            Spacer(Modifier.height(10.dp))
-            BigButton("Join a host", primary = false) { session.startJoin(wDp, hDp) }
+
+            Spacer(Modifier.height(16.dp))
+            Text("Join this address", fontSize = 14.sp, color = Sub)
+            Spacer(Modifier.height(6.dp))
+            BasicTextField(
+                value = hostToFind,
+                onValueChange = { hostToFind = it },
+                singleLine = true,
+                textStyle = TextStyle(color = Ink, fontSize = 16.sp),
+                cursorBrush = SolidColor(Accent),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFFF7F7F7))
+                    .border(1.dp, Line, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 14.dp, vertical = 13.dp),
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (hostToFind.isBlank()) "Leave it empty to find a host on its own."
+                else "Will connect straight to $hostToFind.",
+                fontSize = 14.sp, color = Sub, lineHeight = 19.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+            BigButton("Join a host", primary = false) {
+                session.startJoin(wDp, hDp, hostToFind)
+            }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -433,6 +480,9 @@ private fun WaitingScreen(session: Session) {
 
 @Composable
 private fun LiveScreen(session: Session) {
+    // The control bar drives the browser, so it needs the browser itself.
+    var webView by remember { mutableStateOf<WebView?>(null) }
+
     val world = session.world
 
     var frame by remember { mutableIntStateOf(0) }
@@ -465,7 +515,7 @@ private fun LiveScreen(session: Session) {
 
         Box(Modifier.fillMaxSize()) {
             when {
-                session.webMode && session.isHost -> RemoteHostSurface(session)
+                session.webMode && session.isHost -> RemoteHostSurface(session) { webView = it }
                 session.webMode -> RemoteViewerSurface(session)
                 session.videoMode -> VideoSurface(session)
             }
@@ -559,7 +609,7 @@ private fun LiveScreen(session: Session) {
                 }
             }
 
-            LiveBar(session, Modifier.align(Alignment.BottomCenter))
+            LiveBar(session, webView, Modifier.align(Alignment.BottomCenter))
         }
 
         if (frame < 0) Unit
@@ -568,8 +618,23 @@ private fun LiveScreen(session: Session) {
 
 /** The floating control bar over the content. */
 @Composable
-private fun LiveBar(session: Session, modifier: Modifier = Modifier) {
+private fun LiveBar(session: Session, web: WebView?, modifier: Modifier = Modifier) {
     val pick = clipPicker { uri, name -> session.pickClip(uri, name) }
+    var typed by remember { mutableStateOf("") }
+    var shown by remember { mutableStateOf("") }
+
+    // Follow the address as the user follows links.
+    LaunchedEffect(web) {
+        val v = web ?: return@LaunchedEffect
+        while (isActive) {
+            val u = v.url ?: ""
+            if (u != shown && !u.startsWith("about:")) {
+                shown = u
+                typed = u
+            }
+            delay(400)
+        }
+    }
 
     Column(
         modifier
@@ -577,6 +642,10 @@ private fun LiveBar(session: Session, modifier: Modifier = Modifier) {
             .padding(horizontal = 16.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (session.webMode && session.isHost && web != null) {
+            BrowserBar(web, typed) { typed = it }
+            Spacer(Modifier.height(8.dp))
+        }
         Row(
             Modifier
                 .shadow(10.dp, RoundedCornerShape(28.dp))
@@ -617,6 +686,49 @@ private fun LiveBar(session: Session, modifier: Modifier = Modifier) {
             )
         }
     }
+}
+
+/** Back, an address, and Go. Enough to browse with. */
+@Composable
+private fun BrowserBar(web: WebView, typed: String, onType: (String) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .shadow(10.dp, RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color(0xE6151515))
+            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(24.dp))
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BarButton("<") { if (web.canGoBack()) web.goBack() else web.reload() }
+        BasicTextField(
+            value = typed,
+            onValueChange = onType,
+            singleLine = true,
+            textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+            cursorBrush = SolidColor(Color.White),
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color(0x33FFFFFF))
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+        )
+        BarButton("Go") { addressOf(typed)?.let { web.loadUrl(it) } }
+    }
+}
+
+/**
+ * Turn what the user typed into something loadable. A bare word searches, an
+ * address goes straight there. People type "cats" and expect results, not a
+ * DNS failure.
+ */
+fun addressOf(text: String): String? {
+    val t = text.trim()
+    if (t.isEmpty()) return null
+    if (t.startsWith("http://") || t.startsWith("https://")) return t
+    return if (t.contains('.') && !t.contains(' ')) "https://$t"
+    else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(t, "UTF-8")
 }
 
 @Composable
@@ -694,7 +806,7 @@ private fun VideoSurface(session: Session) {
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun RemoteHostSurface(session: Session) {
+private fun RemoteHostSurface(session: Session, onWeb: (WebView) -> Unit) {
     val world = session.world
     val density = LocalDensity.current.density
     val calib = session.calib
@@ -737,6 +849,7 @@ private fun RemoteHostSurface(session: Session) {
                     }
                     if (url.isNotEmpty()) loadUrl(url)
                     web = this
+                    onWeb(this)
                 }
             },
             update = { v -> if (url.isNotEmpty() && v.url != url) v.loadUrl(url) },
@@ -839,7 +952,7 @@ private fun RemoteViewerSurface(session: Session) {
     var lost by remember { mutableStateOf(false) }
 
     DisposableEffect(host) {
-        val client = FrameClient(scope)
+        val client = FrameClient(scope, session.ports)
         if (host != null) {
             client.connect(
                 host = host,

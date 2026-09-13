@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.MediaItem
@@ -48,9 +49,16 @@ class Session(private val scope: CoroutineScope, context: Context) {
     private val appContext = context.applicationContext
 
     val world = World()
-    val media = MediaServer(appContext, scope)
-    val streamer = FrameServer(scope)
-    private var link = Link(scope)
+
+    /** Which set of ports this pair uses. Lets several pairs share one network. */
+    var channel by mutableIntStateOf(0)
+    var ports = Ports(0)
+        private set
+
+    private var media = MediaServer(appContext, scope, ports)
+    var streamer = FrameServer(scope, ports)
+        private set
+    private var link = Link(scope, ports)
     private var collectJob: Job? = null
 
     var phase by mutableStateOf(Phase.Menu); private set
@@ -123,13 +131,30 @@ class Session(private val scope: CoroutineScope, context: Context) {
         link.host()
     }
 
-    fun startJoin(w: Float, h: Float) {
+    fun startJoin(w: Float, h: Float, host: String? = null) {
         myW = w; myH = h
         isHost = false
-        note = "looking for host…"
+        note = if (host.isNullOrBlank()) "looking for host…" else "reaching $host…"
         phase = Phase.Waiting
-        link.join()
+        link.join(host)
     }
+
+    /**
+     * Rebuild every socket on a new channel. Both phones must use the same one.
+     * Only possible between sessions; the ports cannot move under a live link.
+     */
+    fun chooseChannel(n: Int) {
+        if (phase == Phase.Live || phase == Phase.Waiting) return
+        channel = n.coerceIn(0, MAX_CHANNEL)
+        ports = Ports(channel)
+        media = MediaServer(appContext, scope, ports)
+        streamer = FrameServer(scope, ports)
+        link = Link(scope, ports)
+        wire()
+    }
+
+    /** The address of the host this phone reached, once it is connected. */
+    val hostAddress: String? get() = if (isHost) null else link.peerIp
 
     fun reset() {
         link.close()
@@ -139,7 +164,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
         liveMode = Mode.Canvas
         source = Source.None
         clipName = ""
-        link = Link(scope)
+        link = Link(scope, ports)
         wire()
         note = ""
         phase = Phase.Menu
@@ -452,7 +477,7 @@ class Session(private val scope: CoroutineScope, context: Context) {
         val item = when (source) {
             Source.Me -> myClip?.let { MediaItem.fromUri(it) }
             Source.Peer -> link.peerIp?.let {
-                MediaItem.fromUri("http://$it:$MEDIA_PORT$MEDIA_PATH")
+                MediaItem.fromUri("http://$it:${ports.media}$MEDIA_PATH")
             }
             Source.None -> null
         } ?: return
