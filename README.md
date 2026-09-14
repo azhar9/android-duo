@@ -510,9 +510,10 @@ fault, and the same correction.
 
 ## What we tested, and on what
 
-Build **1.0.0 (33)**, commit `42acfaf`, on two phones: a Google Pixel 9 Pro XL
+Build **1.0.0 (36)**, commit `ab4a42f`, on two phones: a Google Pixel 9 Pro XL
 (Android 17) and a Xiaomi Mi 11X (Android 13). Both phones carried the same
-file. Everything below was seen on the phones, not worked out on paper.
+file, and the last pass was made with the **release** build, not the debug one.
+Everything below was seen on the phones, not worked out on paper.
 
 | What | What we saw |
 |---|---|
@@ -525,12 +526,23 @@ file. Everything below was seen on the phones, not worked out on paper.
 | Send from another app | A link shared from a chat app arrived with the address filled and the Web mode chosen |
 | Settings remembered | Set 4.5 mm and 106%, closed the app, opened it: both came back |
 | Two different builds | With a second build on one phone, both phones showed the same refusal and named the reason |
+| Set up, both ways round | With the host on the left and again on the right: the ruler numbers, the lines of text and the ball all met at the join |
+| The gap, changed live | Pressed on the host mid-session: the number and the bar moved, in every mode |
+| The size, changed live | Pressed on the client mid-session: its whole window was cut again and the view changed on the spot |
+| The clip button | Present in video mode only, gone in a page and a picture |
 
 **Found while testing, and fixed before this build.** The size setting of each
 phone was being fed into the width of the page. Two phones with different sizes
 laid the same page out at two different widths — 894 and 843 — so the lines
 broke in different places and the halves could never meet. The page is now laid
 out at one width on both phones, and the size is applied as a zoom.
+
+**One thing the app does not correct.** The two phones must sit at the same
+height. A phone lying a few millimetres lower shows every line a few
+millimetres out, and no setting moves it. There is no control for it on
+purpose: the two phones used here are 162.8 mm and 163.7 mm tall, so on a desk
+they sit level to within about a millimetre. Two phones of very different
+heights would want a stand, or a book under the shorter one.
 
 **Not tested here.** The share path for a video was checked as far as the
 command line allows: the app received the file and reached the clip code, but a
